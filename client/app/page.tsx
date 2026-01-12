@@ -6,7 +6,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Tile } from "@/components/Tile";
 import { useLanguage } from "@/contexts/LanguageContext";
 
-export default function Home() {
+import { Suspense } from "react";
+
+function HomeContent() {
     const [nickname, setNickname] = useState("");
     const [avatarId, setAvatarId] = useState(0); // 0-7
     const [isLoaded, setIsLoaded] = useState(false);
@@ -34,6 +36,20 @@ export default function Home() {
         }
     }, [nickname, avatarId, gameMode, isLoaded]);
 
+    const socket = getSocket();
+    const { t, language, setLanguage } = useLanguage();
+    const router = useRouter();
+
+    const avatars = [
+        "👨🏻", "👩🏻", "👱🏻‍♂️", "👱🏻‍♀️", "🧔🏻", "👵🏻", "👴🏻", "👶🏻",
+        "👨🏾", "👩🏾", "👨🏿", "👩🏿", "👨🏽", "👩🏽", "👳🏾‍♂️", "🧕🏾",
+        "🤵🏻", "👰🏻", "🤴🏻", "👸🏻", "👮🏻‍♂️", "🕵🏻‍♂️", "💂🏻‍♂️", "👷🏻‍♂️",
+        "👨🏻‍⚕️", "👩🏻‍⚕️", "👨🏻‍🎓", "👩🏻‍🎓", "👨🏻‍🎤", "👩🏻‍🎤", "👨🏻‍🏫", "👩🏻‍🏫",
+        "👨🏻‍🏭", "👩🏻‍🏭", "👨🏻‍💻", "👩🏻‍💻", "👨🏻‍💼", "👩🏻‍💼", "👨🏻‍🔧", "👩🏻‍🔧",
+        "🧙🏻‍♂️", "🧙🏻‍♀️", "🧛🏻‍♂️", "🧛🏻‍♀️", "🧟‍♂️", "🧟‍♀️", "🧞‍♂️", "🧞‍♀️",
+        "🕴🏻", "🧘🏻‍♂️", "🧘🏻‍♀️", "🏄🏻‍♂️", "🏄🏻‍♀️", "🏊🏻‍♂️", "🏊🏻‍♀️", "⛹🏻‍♂️"
+    ];
+
     // Handle Auto-Join via URL
     useEffect(() => {
         const joinCode = searchParams.get('join');
@@ -54,23 +70,10 @@ export default function Home() {
                 return () => clearTimeout(timer);
             }
         }
-    }, [searchParams, isLoaded, nickname, avatarId]);
+    }, [searchParams, isLoaded, nickname, avatarId, socket, avatars]);
 
     const [error, setError] = useState("");
     const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
-    const router = useRouter();
-    const socket = getSocket();
-    const { t, language, setLanguage } = useLanguage();
-
-    const avatars = [
-        "👨🏻", "👩🏻", "👱🏻‍♂️", "👱🏻‍♀️", "🧔🏻", "👵🏻", "👴🏻", "👶🏻",
-        "👨🏾", "👩🏾", "👨🏿", "👩🏿", "👨🏽", "👩🏽", "👳🏾‍♂️", "🧕🏾",
-        "🤵🏻", "👰🏻", "🤴🏻", "👸🏻", "👮🏻‍♂️", "🕵🏻‍♂️", "💂🏻‍♂️", "👷🏻‍♂️",
-        "👨🏻‍⚕️", "👩🏻‍⚕️", "👨🏻‍🎓", "👩🏻‍🎓", "👨🏻‍🎤", "👩🏻‍🎤", "👨🏻‍🏫", "👩🏻‍🏫",
-        "👨🏻‍🏭", "👩🏻‍🏭", "👨🏻‍💻", "👩🏻‍💻", "👨🏻‍💼", "👩🏻‍💼", "👨🏻‍🔧", "👩🏻‍🔧",
-        "🧙🏻‍♂️", "🧙🏻‍♀️", "🧛🏻‍♂️", "🧛🏻‍♀️", "🧟‍♂️", "🧟‍♀️", "🧞‍♂️", "🧞‍♀️",
-        "🕴🏻", "🧘🏻‍♂️", "🧘🏻‍♀️", "🏄🏻‍♂️", "🏄🏻‍♀️", "🏊🏻‍♂️", "🏊🏻‍♀️", "⛹🏻‍♂️"
-    ];
 
     useEffect(() => {
         socket.on("roomCreated", (code: string) => {
@@ -342,5 +345,13 @@ export default function Home() {
                 </div>
             </div>
         </div>
+    );
+}
+
+export default function Home() {
+    return (
+        <Suspense fallback={<div className="min-h-screen bg-[#0f0c29] flex items-center justify-center text-white text-2xl font-bold animate-pulse">Okey.io Yukleniyor...</div>}>
+            <HomeContent />
+        </Suspense>
     );
 }

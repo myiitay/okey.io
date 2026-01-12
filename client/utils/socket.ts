@@ -7,7 +7,8 @@ let socket: Socket;
 
 export const getSocket = () => {
     if (!socket) {
-        socket = io("http://localhost:3001", {
+        const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
+        socket = io(socketUrl, {
             transports: ["websocket"],
             autoConnect: true,
         });

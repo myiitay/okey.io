@@ -134,6 +134,13 @@ export default function RoomPage() {
         }
     }, [roomData, socket.id, code, router]);
 
+    const [gameMode, setGameMode] = useState<'standard' | '101' | null>(null);
+
+    useEffect(() => {
+        const savedMode = localStorage.getItem('okey_mode') as 'standard' | '101';
+        setGameMode(savedMode || 'standard');
+    }, []);
+
     if (error) {
         return (
             <div className="min-h-screen bg-[#0f0c29] flex items-center justify-center text-white font-sans">
@@ -148,8 +155,8 @@ export default function RoomPage() {
         );
     }
 
-    if (!roomData) return <div className={`h-screen text-white flex flex-col gap-4 items-center justify-center font-bold text-2xl transition-colors duration-1000 ${localStorage.getItem('okey_mode') === '101' ? 'bg-[#1a0505]' : 'bg-[#0f0c29]'}`}>
-        <div className={`w-16 h-16 border-4 border-r-transparent border-l-transparent rounded-full animate-spin ${localStorage.getItem('okey_mode') === '101' ? 'border-t-red-500 border-b-red-500' : 'border-t-yellow-400 border-b-yellow-400'}`}></div>
+    if (!roomData) return <div className={`h-screen text-white flex flex-col gap-4 items-center justify-center font-bold text-2xl transition-colors duration-1000 ${gameMode === '101' ? 'bg-[#1a0505]' : 'bg-[#0f0c29]'}`}>
+        <div className={`w-16 h-16 border-4 border-r-transparent border-l-transparent rounded-full animate-spin ${gameMode === '101' ? 'border-t-red-500 border-b-red-500' : 'border-t-yellow-400 border-b-yellow-400'}`}></div>
         <div className="animate-pulse tracking-widest">{t("connecting")}</div>
     </div>;
 
