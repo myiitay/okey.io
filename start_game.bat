@@ -1,0 +1,19 @@
+@echo off
+echo Starting Okey Game System...
+echo Closing existing Node.js processes...
+taskkill /F /IM node.exe
+timeout /t 2 >nul
+
+echo Starting Server...
+start "Okey Server" cmd /k "cd server && npm run dev"
+
+echo Starting Client...
+start "Okey Client" cmd /k "cd client && npm run dev"
+
+echo Waiting for services to initialize...
+timeout /t 5
+
+echo Opening Game in Browser...
+start http://localhost:3000
+
+echo Done! Don't close the server/client windows while playing.
