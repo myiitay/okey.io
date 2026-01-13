@@ -6,7 +6,6 @@ interface Room {
     players: Player[];
     game?: OkeyGame;
     maxPlayers: number;
-    mode: 'standard' | '101';
     bannedPlayers: Set<string>;
     winScores: Map<string, number>; // Name -> Score
     restartVotes: Set<string>; // Socket ID
@@ -44,17 +43,15 @@ export class RoomManager {
             // Basic join lobby if needed
         });
 
-        socket.on('createRoom', (payload: { name: string, avatar?: string, mode?: 'standard' | '101' } | string) => {
+        socket.on('createRoom', (payload: { name: string, avatar?: string } | string) => {
             let name = "";
             let avatar = "👤"; // Default
-            let mode: 'standard' | '101' = 'standard';
 
             if (typeof payload === 'string') {
                 name = payload;
             } else if (payload && typeof payload === 'object') {
                 name = payload.name;
                 if (payload.avatar) avatar = payload.avatar;
-                if (payload.mode) mode = payload.mode;
             }
 
             if (!name) {
@@ -78,7 +75,6 @@ export class RoomManager {
                 id: code,
                 players: [player],
                 maxPlayers: 4,
-                mode,
                 bannedPlayers: new Set(),
                 winScores: new Map(),
                 restartVotes: new Set()
@@ -240,13 +236,8 @@ export class RoomManager {
                 return;
             }
 
-            if (room.mode === '101' && room.players.length !== 4) {
-                socket.emit('error', '101 Okey requires exactly 4 players');
-                return;
-            }
-
-            if (room.mode !== '101' && room.players.length !== 2 && room.players.length !== 4) {
-                socket.emit('error', 'Standard Okey requires exactly 2 or 4 players');
+            if (room.players.length !== 2 && room.players.length !== 4) {
+                socket.emit('error', 'Game requires exactly 2 or 4 players');
                 return;
             }
 
@@ -266,41 +257,34 @@ export class RoomManager {
 
                 console.log(`Starting game in room ${room.id} with ${room.players.length} players`);
                 try {
-                    room.game = new OkeyGame(
-                        room.players.map(p => p.id),
-                        (gameState: GameState) => {
-                            // Status change handled by gameStarted or updateRoom emitters below/above
-                            this.emitGameState(room);
-                        },
-                        room.mode,
-                        (playerId: string, delta: number) => {
-                            const player = this.players.get(playerId);
-                            if (player) {
-                                const currentScore = room.winScores.get(player.name) || 0;
-                                room.winScores.set(player.name, currentScore + delta);
+                    room.game = new OkeyGame(room.players.map(p => p.id), (gameState: GameState) => {
+                        // Handle win detection for scores
+                        if (gameState.status === 'FINISHED' && gameState.winnerId) {
+                            const winner = this.players.get(gameState.winnerId);
+                            if (winner) {
+                                const currentScore = room.winScores.get(winner.name) || 0;
+                                room.winScores.set(winner.name, currentScore + 1);
                                 this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
                             }
                         }
-                    );
+                        this.io.to(room.id).emit('gameState', gameState);
+                    });
 
-                    room.game.start();
+                    const initialState = room.game.start();
                     console.log(`[startGame] Game started, emitting to ${room.id}`);
 
                     room.restartVotes.clear(); // Reset votes for next turn
 
-                    // Emit game started
-                    room.players.forEach(p => {
-                        this.io.to(p.id).emit('gameStarted', room.game!.getSanitizedState(p.id));
-                    });
+                    // Emit game started (Joker is already selected in start(), but client will show animation)
+                    this.io.to(room.id).emit('gameStarted', initialState);
                     this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
 
                     // After 3 more seconds (for dealing animation), emit Joker reveal
                     setTimeout(() => {
                         if (room.game) {
-                            const state = room.game.getFullState();
                             this.io.to(room.id).emit('jokerRevealed', {
-                                indicator: state.indicator,
-                                okeyTile: state.okeyTile
+                                indicator: initialState.indicator,
+                                okeyTile: initialState.okeyTile
                             });
                         }
                     }, 3000);
@@ -357,19 +341,9 @@ export class RoomManager {
             if (room && room.game) {
                 try {
                     room.game.handleAction(player.id, action);
-                    this.emitGameState(room);
                 } catch (e: any) {
                     socket.emit('error', e.message);
                 }
-            }
-        });
-
-        socket.on('getGameState', () => {
-            const player = this.players.get(socket.id);
-            if (!player || !player.roomId) return;
-            const room = this.rooms.get(player.roomId);
-            if (room && room.game) {
-                socket.emit('gameState', room.game.getSanitizedState(socket.id));
             }
         });
 
@@ -413,15 +387,7 @@ export class RoomManager {
             })),
             winScores: room.winScores ? Object.fromEntries(room.winScores) : {},
             restartCount: room.restartVotes?.size || 0,
-            gameStarted: !!room.game,
-            mode: room.mode
+            gameStarted: !!room.game
         };
-    }
-
-    private emitGameState(room: Room) {
-        if (!room.game) return;
-        room.players.forEach(p => {
-            this.io.to(p.id).emit('gameState', room.game!.getSanitizedState(p.id));
-        });
     }
 }

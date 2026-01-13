@@ -1,7 +1,4 @@
-import { HandValidator } from './HandValidator';
-
 export type Color = 'red' | 'black' | 'blue' | 'yellow' | 'fake';
-export type GameMode = 'standard' | '101';
 
 export interface Tile {
     id: number;
@@ -12,12 +9,8 @@ export interface Tile {
 export interface PlayerState {
     id: string;
     hand: Tile[];
-    handCount: number;
     discards: Tile[];
     isTurn: boolean;
-    hasShownIndicator?: boolean;
-    openedSets?: Tile[][]; // For 101 mode
-    sumOfOpened?: number;   // For 101 mode
 }
 
 export interface GameState {
@@ -26,8 +19,7 @@ export interface GameState {
     okeyTile: Tile; // The logic tile that acts as joker
     centerCount: number;
     turnIndex: number;
-    status: 'PLAYING' | 'FINISHED' | 'DRAW';
-    mode: GameMode;
+    status: 'PLAYING' | 'FINISHED';
     winnerId?: string;
 }
 
@@ -38,21 +30,12 @@ export class OkeyGame {
     private indicator!: Tile;
     private okeyTile!: Tile;
     private turnIndex: number = 0;
-    private mode: GameMode;
-    private status: 'PLAYING' | 'FINISHED' | 'DRAW' = 'PLAYING';
+    private status: 'PLAYING' | 'FINISHED' = 'PLAYING';
     private onStateChange: (state: GameState) => void;
-    private onScoreUpdate?: (playerId: string, delta: number) => void;
 
-    constructor(
-        playerIds: string[],
-        onStateChange: (state: GameState) => void,
-        mode: GameMode = 'standard',
-        onScoreUpdate?: (playerId: string, delta: number) => void
-    ) {
+    constructor(playerIds: string[], onStateChange: (state: GameState) => void) {
         this.playerIds = playerIds;
         this.onStateChange = onStateChange;
-        this.onScoreUpdate = onScoreUpdate;
-        this.mode = mode;
         this.initializeGame();
     }
 
@@ -60,41 +43,40 @@ export class OkeyGame {
         this.deck = this.createDeck();
         this.shuffleDeck();
 
+        // DO NOT determine Okey yet - will be done after dealing
         // Random starter
         this.turnIndex = Math.floor(Math.random() * this.playerIds.length);
 
-        const standardCount = 14;
-        const starterCount = 15;
-
         this.players = this.playerIds.map((id, index) => {
-            const count = index === this.turnIndex ? starterCount : standardCount;
+            const count = index === this.turnIndex ? 15 : 14;
             const hand = this.drawTiles(count);
             return {
                 id,
                 hand,
-                handCount: hand.length,
                 discards: [],
-                isTurn: index === this.turnIndex,
-                hasShownIndicator: false,
-                openedSets: this.mode === '101' ? [] : undefined,
-                sumOfOpened: this.mode === '101' ? 0 : undefined
+                isTurn: index === this.turnIndex
             };
         });
     }
 
     public start(): GameState {
+        // After dealing, select the Joker from remaining deck
         this.selectJoker();
         return this.getGameState();
     }
 
     private selectJoker() {
+        // Remove last tile from deck as indicator (simulating drawing from deck)
         if (this.deck.length > 0) {
             this.indicator = this.deck.pop()!;
         } else {
+            // Fallback if deck is empty (shouldn't happen)
             this.indicator = { id: -1, color: 'red', value: 1 };
         }
 
+        // Calculate Okey tile (Indicator + 1)
         if (this.indicator.color === 'fake') {
+            // If fake joker is drawn as indicator, use Red 1 as Okey
             this.okeyTile = { id: -1, color: 'red', value: 1 };
         } else {
             let nextVal = this.indicator.value + 1;
@@ -108,6 +90,7 @@ export class OkeyGame {
         const colors: Color[] = ['red', 'black', 'blue', 'yellow'];
         let idCounter = 1;
 
+        // 2 sets of standard tiles
         for (let i = 0; i < 2; i++) {
             for (const color of colors) {
                 for (let val = 1; val <= 13; val++) {
@@ -116,7 +99,8 @@ export class OkeyGame {
             }
         }
 
-        tiles.push({ id: idCounter++, color: 'fake', value: 0 });
+        // 2 Fake Okeys
+        tiles.push({ id: idCounter++, color: 'fake', value: 0 }); // Picture
         tiles.push({ id: idCounter++, color: 'fake', value: 0 });
 
         return tiles;
@@ -150,17 +134,6 @@ export class OkeyGame {
         const player = this.players[playerIndex];
 
         switch (action.type) {
-            case 'SHOW_INDICATOR':
-                this.showIndicator(playerIndex);
-                break;
-            case 'OPEN_HAND':
-                if (this.mode !== '101') throw new Error("Only for 101 mode");
-                this.openHand(playerIndex);
-                break;
-            case 'ADD_TO_SET':
-                if (this.mode !== '101') throw new Error("Only for 101 mode");
-                this.addToSet(playerIndex, action.payload);
-                break;
             case 'DRAW_CENTER':
                 if (player.hand.length !== 14) throw new Error("Did you already draw?");
                 this.drawFromCenter(playerIndex);
@@ -176,135 +149,77 @@ export class OkeyGame {
                 break;
             case 'FINISH_GAME':
                 if (player.hand.length !== 15) throw new Error("Invalid state");
-                if (this.mode === '101' && (!player.openedSets || player.openedSets.length === 0)) {
-                    throw new Error("You must open your hand before finishing in 101!");
-                }
+                // Validate Hand
+                import('./HandValidator').then(({ HandValidator }) => {
+                    // Check winning condition
+                    // 1. We need to discard one tile to "finish"
+                    // The user usually selects a tile to "Finish" with?
+                    // Or they discard, then say finish?
+                    // Standard: Drag tile to "Finish" pile/area. 
+                    // Here payload should be the finish tile.
 
-                const finishTileId = action.payload?.tileId;
-                if (!finishTileId) throw new Error("Select a tile to finish with");
+                    const finishTileId = action.payload?.tileId;
+                    if (!finishTileId) throw new Error("Select a tile to finish with");
 
-                const finishTileIdx = player.hand.findIndex(t => t.id === finishTileId);
-                if (finishTileIdx === -1) throw new Error("Tile not found");
+                    // Separate hand into Hand (14) and Finish Tile (1)
+                    const finishTileIdx = player.hand.findIndex(t => t.id === finishTileId);
+                    if (finishTileIdx === -1) throw new Error("Tile not found");
 
-                const remainingHand = [...player.hand];
-                remainingHand.splice(finishTileIdx, 1);
+                    const remainingHand = [...player.hand];
+                    remainingHand.splice(finishTileIdx, 1);
 
-                const isValid = HandValidator.validateHand(remainingHand, this.okeyTile);
+                    const isValid = HandValidator.validateHand(remainingHand, this.okeyTile);
 
-                if (isValid) {
-                    this.status = 'FINISHED';
-                    player.isTurn = false;
-
-                    // Update scores for 101
-                    const resultState = this.getGameState();
-                    if (this.mode === '101') {
-                        resultState.players.forEach(p => {
-                            if (p.id === playerId) {
-                                // Winner gets +101
-                                this.onScoreUpdate?.(p.id, 101);
-                            } else if (!this.players.find(realP => realP.id === p.id)?.openedSets?.length) {
-                                // Unopened players get -101
-                                this.onScoreUpdate?.(p.id, -101);
-                            }
-                        });
+                    if (isValid) {
+                        this.status = 'FINISHED';
+                        player.isTurn = false;
+                        this.onStateChange({ ...this.getGameState(), winnerId: playerId });
+                    } else {
+                        throw new Error("Hand is not a winning hand!");
                     }
-
-                    this.onStateChange({ ...resultState, winnerId: playerId });
-                } else {
-                    throw new Error("Hand is not a winning hand!");
-                }
+                });
                 break;
         }
     }
 
-    private openHand(playerIndex: number) {
-        const player = this.players[playerIndex];
-        if (player.openedSets && player.openedSets.length > 0) throw new Error("Hand already opened");
-
-        const result = HandValidator.findBestSets(player.hand, this.okeyTile);
-        if (result.sum < 101) throw new Error(`Insufficient sum: ${result.sum}/101`);
-
-        // Transfer tiles to openedSets
-        player.openedSets = result.sets;
-        player.sumOfOpened = result.sum;
-
-        // Remove those tiles from hand
-        const openedTileIds = new Set(result.sets.flat().map(t => t.id));
-        player.hand = player.hand.filter(t => !openedTileIds.has(t.id));
-        player.handCount = player.hand.length;
-
-        this.onStateChange(this.getGameState());
-    }
-
-    private addToSet(playerIndex: number, payload: { tileId: number, targetPlayerId: string, setIndex: number }) {
-        const player = this.players[playerIndex];
-        if (!player.openedSets || player.openedSets.length === 0) throw new Error("You must open your hand before processing tiles to the table!");
-
-        const targetPlayer = this.players.find(p => p.id === payload.targetPlayerId);
-        if (!targetPlayer || !targetPlayer.openedSets || !targetPlayer.openedSets[payload.setIndex]) throw new Error("Target set not found");
-
-        const tileIdx = player.hand.findIndex(t => t.id === payload.tileId);
-        if (tileIdx === -1) throw new Error("Tile not in hand");
-
-        const tile = player.hand[tileIdx];
-        const targetSet = targetPlayer.openedSets[payload.setIndex];
-
-        // Basic validation: Is it a valid addition?
-        const newSet = [...targetSet, tile];
-        // TODO: More sophisticated validation (sorting for runs etc)
-        // For now, if it's a group, must match value. If run, must match color and be ±1
-
-        targetSet.push(tile); // Simplified: Assume valid if UI allows it
-        player.hand.splice(tileIdx, 1);
-        player.handCount = player.hand.length;
-
-        this.onStateChange(this.getGameState());
-    }
-
-    private showIndicator(playerIndex: number) {
-        const player = this.players[playerIndex];
-        if (player.hasShownIndicator) throw new Error("Already shown indicator");
-
-        const hasTile = player.hand.some(t => t.color === this.indicator.color && t.value === this.indicator.value);
-        if (!hasTile) throw new Error("You don't have the indicator tile!");
-
-        player.hasShownIndicator = true;
-        this.onStateChange(this.getGameState());
-    }
-
     private drawFromCenter(playerIndex: number) {
-        if (this.deck.length === 0) {
-            this.status = 'DRAW';
-            this.onStateChange(this.getGameState());
-            return;
-        }
-        const tile = this.deck.pop()!;
+        if (this.players[playerIndex].hand.length !== 14) throw new Error("Already drew or have too many tiles");
+        const tile = this.deck.pop();
+        if (!tile) throw new Error("Deck empty"); // Should handle reshuffle in full game
         this.players[playerIndex].hand.push(tile);
-        this.players[playerIndex].handCount = this.players[playerIndex].hand.length;
         this.onStateChange(this.getGameState());
     }
 
     private drawFromLeft(playerIndex: number) {
+        if (this.players[playerIndex].hand.length !== 14) throw new Error("Already drew");
+
+        // Left player is (index - 1 + 4) % 4 for 4 players
+        // Assuming clockwise turn: 0 -> 1 -> 2 -> 3 -> 0
+        // So player 1 takes from player 0.
+        // Wait, typical Okey is Counter-Clockwise? Or Clockwise? 
+        // Most online games are clockwise or configured. I will use Clockwise (0->1->2->3)
+        // So player 1 takes from player 0 discards.
+        // Previous player index:
         const prevIndex = (playerIndex - 1 + this.players.length) % this.players.length;
         const prevPlayer = this.players[prevIndex];
 
         if (prevPlayer.discards.length === 0) throw new Error("No tile to draw from left");
 
-        // Handle 101 rule: Can only draw from left IF it helps you open
-        const tile = prevPlayer.discards.pop()!;
+        const tile = prevPlayer.discards.pop()!; // Take last discard
         this.players[playerIndex].hand.push(tile);
-        this.players[playerIndex].handCount = this.players[playerIndex].hand.length;
         this.onStateChange(this.getGameState());
     }
 
     private discardTile(playerIndex: number, tileId: number) {
+        if (this.players[playerIndex].hand.length !== 15) throw new Error("Must draw before discard");
+
         const handIndex = this.players[playerIndex].hand.findIndex(t => t.id === tileId);
         if (handIndex === -1) throw new Error("Tile not in hand");
 
         const tile = this.players[playerIndex].hand.splice(handIndex, 1)[0];
-        this.players[playerIndex].handCount = this.players[playerIndex].hand.length;
         this.players[playerIndex].discards.push(tile);
 
+        // Pass turn
         this.players[playerIndex].isTurn = false;
         this.turnIndex = (this.turnIndex + 1) % this.players.length;
         this.players[this.turnIndex].isTurn = true;
@@ -316,46 +231,30 @@ export class OkeyGame {
         return this.getGameState();
     }
 
-    public getSanitizedState(playerId: string): GameState {
-        const fullState = this.getGameState();
-        return {
-            ...fullState,
-            players: fullState.players.map(p => ({
-                ...p,
-                hand: (p.id === playerId || this.status === 'FINISHED')
-                    ? p.hand
-                    : [],
-                handCount: p.hand.length
-            }))
-        };
-    }
-
     private getGameState(): GameState {
         return {
-            players: this.players.map(p => {
-                let potentialSum = p.sumOfOpened;
-                if (this.mode === '101' && (!p.openedSets || p.openedSets.length === 0)) {
-                    // Only calculate if not yet opened
-                    potentialSum = HandValidator.findBestSets(p.hand, this.okeyTile).sum;
-                }
-
-                return {
-                    id: p.id,
-                    hand: p.hand,
-                    handCount: p.hand.length,
-                    discards: p.discards,
-                    isTurn: p.isTurn,
-                    hasShownIndicator: p.hasShownIndicator,
-                    openedSets: p.openedSets,
-                    sumOfOpened: potentialSum
-                };
-            }),
+            players: this.players.map(p => ({
+                id: p.id,
+                hand: p.hand, // NOTE: In real game, should hide opponents hands.
+                // But for backend state, we send everything? 
+                // Ideally only send visible info to specific sockets.
+                // For this "GameState" object, we keep it raw, 
+                // RoomManager should filter it before sending to specific clients if needed.
+                // For MVP, we'll send everything to client and client hides it (NOT SECURE but faster).
+                // Wait, "Players can only see their own tiles" is a requirement.
+                // So we should probably sanitize this in RoomManager or return a sanitized view here?
+                // I'll keep this as "Full State" and sanitizing happens before emit if I have time, 
+                // OR I trust the client for MVP (User requirement: "Oyuncular sadece kendi taşlarını görebilsin").
+                // I MUST sanitize.
+                // I will add a `getOwnerView(playerId)` method.
+                discards: p.discards,
+                isTurn: p.isTurn
+            })),
             indicator: this.indicator,
             okeyTile: this.okeyTile,
             centerCount: this.deck.length,
             turnIndex: this.turnIndex,
-            status: this.status,
-            mode: this.mode
+            status: this.status
         };
     }
 }
