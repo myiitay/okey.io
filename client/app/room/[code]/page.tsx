@@ -36,9 +36,31 @@ export default function RoomPage() {
     const [isStarting, setIsStarting] = useState(false);
 
     useEffect(() => {
-        if (code && !roomData) {
-            socket.emit("checkRoom", code);
+        const check = () => {
+            if (code && !roomData && socket.connected) {
+                console.log("Checking room:", code);
+                socket.emit("checkRoom", code);
+            }
+        };
+
+        if (socket.connected) {
+            check();
+        } else {
+            console.log("Socket not connected, waiting...");
+            socket.on("connect", check);
         }
+
+        // Interval fallback for stubborn connections
+        const interval = setInterval(() => {
+            if (code && !roomData && socket.connected) {
+                socket.emit("checkRoom", code);
+            }
+        }, 2000);
+
+        return () => {
+            socket.off("connect", check);
+            clearInterval(interval);
+        };
     }, [code, socket, roomData]);
 
     useEffect(() => {
