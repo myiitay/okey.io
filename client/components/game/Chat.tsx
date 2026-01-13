@@ -4,12 +4,10 @@ import { Socket } from 'socket.io-client';
 import { soundManager } from '@/utils/soundManager';
 
 interface Message {
-    id: string;
     text: string;
-    senderId: string;
-    senderName: string;
-    senderAvatar?: string;
-    timestamp: number;
+    sender: string;
+    avatar: string;
+    time: string;
     isSystem?: boolean;
 }
 
@@ -96,9 +94,9 @@ export const Chat: React.FC<{ socket: Socket }> = ({ socket }) => {
                             {!msg.isSystem && (
                                 <div className="flex items-center gap-1.5 mb-0.5 ml-1">
                                     <div className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[10px] shadow-sm border border-white/10 overflow-hidden">
-                                        {msg.senderAvatar || '👤'}
+                                        {msg.avatar || '👤'}
                                     </div>
-                                    <span className="text-[9px] text-white/40 drop-shadow-md font-bold">{msg.senderName}</span>
+                                    <span className="text-[9px] text-white/40 drop-shadow-md font-bold">{msg.sender}</span>
                                 </div>
                             )}
                             <div className={`

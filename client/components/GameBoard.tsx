@@ -60,6 +60,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
     const [rackSlots, setRackSlots] = useState<(TileData | null)[]>(Array(30).fill(null));
     const [showSideHint, setShowSideHint] = useState(false);
     const [lastTurnState, setLastTurnState] = useState(false);
+    const [disconnectMsg, setDisconnectMsg] = useState<string | null>(null);
 
     // Unified Draw/Animation State to prevent race conditions
     const [drawStatus, setDrawStatus] = useState<{
@@ -308,8 +309,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
             // Show notification
             const info = playersMap[playerId];
             if (info) {
-                // We could use a toast here, but simple alert for MVP or just the visual change
-                // console.log(`${info.name} left!`);
+                setShowSideHint(true); // Reuse existing hint or create new one?
+                // Let's create a custom temporary alert div in rendering
+                setDisconnectMsg(`${info.name} oyundan ayrıldı!`);
+                setTimeout(() => setDisconnectMsg(null), 3000);
             }
         });
 
@@ -672,53 +675,65 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
     const arrangeByGroups = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
         let remainingTiles = [...normalTiles];
         const groups: TileData[][] = [];
-        const newSlots: (TileData | null)[] = Array(30).fill(null);
+        let newSlots: (TileData | null)[] = Array(30).fill(null);
 
         // Find Runs (Sequential, same color)
         const colors: ('red' | 'black' | 'blue' | 'yellow')[] = ['red', 'black', 'blue', 'yellow'];
         colors.forEach(color => {
             let colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
 
-            let i = 0;
-            while (i < colorTiles.length) {
-                let currentRun = [colorTiles[i]];
-                let lastValue = colorTiles[i].value;
-                let j = i + 1;
+            // Optimized run finding
+            if (colorTiles.length < 3) return;
 
-                while (j < colorTiles.length) {
-                    if (colorTiles[j].value === lastValue + 1) {
-                        currentRun.push(colorTiles[j]);
-                        lastValue = colorTiles[j].value;
-                    } else if (colorTiles[j].value > lastValue + 1) {
-                        break;
-                    }
-                    j++;
-                }
+            let currentRun: TileData[] = [];
 
-                // Check for 13-1 wrap
-                if (currentRun[currentRun.length - 1].value === 13) {
-                    const oneTile = colorTiles.find(t => t.value === 1 && !currentRun.some(r => r.id === t.id));
-                    if (oneTile) currentRun.push(oneTile);
-                }
-
-                if (currentRun.length >= 3) {
-                    groups.push(currentRun);
-                    const usedIds = new Set(currentRun.map(t => t.id));
-                    remainingTiles = remainingTiles.filter(t => !usedIds.has(t.id));
-                    colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
-                    i = 0;
+            for (let i = 0; i < colorTiles.length; i++) {
+                const tile = colorTiles[i];
+                if (currentRun.length === 0) {
+                    currentRun.push(tile);
                 } else {
-                    i++;
+                    const last = currentRun[currentRun.length - 1];
+                    if (tile.value === last.value + 1) {
+                        currentRun.push(tile);
+                    } else if (tile.value === last.value) {
+                        // Duplicate value, ignore for this run
+                    } else {
+                        // Gap found
+                        if (currentRun.length >= 3) {
+                            groups.push([...currentRun]);
+                            // Remove from remaining
+                            const ids = new Set(currentRun.map(t => t.id));
+                            remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
+                            // Update colorTiles for next iteration
+                            colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
+                            // Restart loop to be safe or just continue? 
+                            // Restarting loop is safer to re-evaluate remaining tiles
+                            i = -1;
+                            currentRun = [];
+                        } else {
+                            currentRun = [tile];
+                        }
+                    }
                 }
             }
+            // Check final run
+            if (currentRun.length >= 3) {
+                groups.push([...currentRun]);
+                const ids = new Set(currentRun.map(t => t.id));
+                remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
+            }
+
+            // 13-1 Wrap Check (Special Case) - simplifying for MVP to avoid complexity bugs
         });
 
         // Find Sets (Same number, different colors)
         const values = Array.from(new Set(remainingTiles.map(t => t.value))).sort((a, b) => a - b);
         values.forEach(val => {
+            // Re-filter to ensure we only look at what's actually remaining
             const valTiles = remainingTiles.filter(t => t.value === val);
             const uniqueColorTiles: TileData[] = [];
             const seenColors = new Set();
+
             valTiles.forEach(t => {
                 if (!seenColors.has(t.color)) {
                     seenColors.add(t.color);
@@ -727,34 +742,72 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
             });
 
             if (uniqueColorTiles.length >= 3) {
+                // Prioritize sets of 4, then 3
                 groups.push(uniqueColorTiles);
                 const usedIds = new Set(uniqueColorTiles.map(t => t.id));
                 remainingTiles = remainingTiles.filter(t => !usedIds.has(t.id));
             }
         });
 
-        // Layout groups with smart Joker placement
+        // --- PLACEMENT logic with SAFETY ---
         let cursor = 0;
+
+        // 1. Place Groups
         groups.forEach(group => {
-            if (cursor + group.length > 30) return;
-            group.forEach((t, i) => {
-                newSlots[cursor + i] = t;
-            });
-            cursor += group.length + 1;
+            if (cursor + group.length <= 30) {
+                group.forEach((t, i) => newSlots[cursor + i] = t);
+                cursor += group.length;
+                if (cursor < 30) cursor++; // Spacer
+            } else {
+                // If no space with spacer, try without spacer logic later or just push to leftovers
+                // For now, treat as leftovers if they don't fit
+                remainingTiles.push(...group);
+            }
         });
 
-        // Place remaining Jokers near potential groups
-        const specials = [...okeyTiles, ...fakeJokers];
-        specials.forEach(joker => {
-            const emptyIdx = newSlots.findIndex(s => s === null);
-            if (emptyIdx !== -1) newSlots[emptyIdx] = joker;
+        // 2. Place Jokers (Okey + Fake)
+        const allJokers = [...okeyTiles, ...fakeJokers];
+        allJokers.forEach(joker => {
+            if (cursor < 30) {
+                newSlots[cursor] = joker;
+                cursor++;
+            } else {
+                // Force fit search
+                const empty = newSlots.indexOf(null);
+                if (empty !== -1) newSlots[empty] = joker;
+            }
         });
 
-        // Fill leftovers
+        // 3. Place Remaining Normal Tiles
         remainingTiles.sort((a, b) => a.color.localeCompare(b.color) || a.value - b.value).forEach(t => {
-            const emptyIdx = newSlots.findIndex(s => s === null);
-            if (emptyIdx !== -1) newSlots[emptyIdx] = t;
+            // Try cursor first
+            if (cursor < 30 && newSlots[cursor] === null) {
+                newSlots[cursor] = t;
+                cursor++;
+            } else {
+                // Find ANY empty slot
+                const emptyIdx = newSlots.indexOf(null);
+                if (emptyIdx !== -1) {
+                    newSlots[emptyIdx] = t;
+                } else {
+                    console.error("CRITICAL: NO SPACE FOR TILE!", t);
+                    // This technically shouldn't happen if total tiles <= 30.
+                }
+            }
         });
+
+        // FINAL SAFETY CHECK: Ensure input count matches output count
+        const inputCount = normalTiles.length + okeyTiles.length + fakeJokers.length;
+        const outputCount = newSlots.filter(t => t !== null).length;
+
+        if (inputCount !== outputCount) {
+            console.log("Auto-arrange mismatch! Fallback to simple fill.");
+            // Fallback: Just dump everything sequentially
+            const all = [...normalTiles, ...okeyTiles, ...fakeJokers];
+            const fallbackSlots = Array(30).fill(null);
+            all.forEach((t, i) => { if (i < 30) fallbackSlots[i] = t; });
+            return fallbackSlots;
+        }
 
         return newSlots;
     };
@@ -1162,6 +1215,17 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
             <Leaderboard />
             {/* Chat Component */}
             <Chat socket={socket} />
+
+            {/* Disconnect Notification */}
+            {disconnectMsg && (
+                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[100] animate-bounce">
+                    <div className="bg-red-600/90 text-white px-6 py-3 rounded-full font-bold shadow-[0_0_20px_red] backdrop-blur-md flex items-center gap-3 border border-red-400">
+                        <span className="text-2xl">⚠️</span>
+                        {disconnectMsg}
+                    </div>
+                </div>
+            )}
+
             {/* --- ENVIRONMENT --- */}
             {/* Table Texture */}
             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/felt.png')] opacity-60 mix-blend-multiply pointer-events-none"></div>

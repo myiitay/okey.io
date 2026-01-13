@@ -268,9 +268,7 @@ export default function RoomPage() {
 
                 {/* RIGHT COL: PLAYERS & ACTION */}
                 <div className="flex flex-col gap-6">
-                    <div className="bg-black/40 backdrop-blur-md px-4 py-2 rounded-lg text-white/80 font-mono text-sm border border-white/10 shadow-lg">
-                        Code: <span className="text-yellow-400 font-bold">{code}</span>
-                    </div>
+
 
                     {/* Player Grid */}
                     <div className="bg-black/20 backdrop-blur-md rounded-[2rem] p-6 border border-white/5 min-h-[400px] flex flex-col">
