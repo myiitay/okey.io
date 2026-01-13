@@ -88,6 +88,11 @@ export default function RoomPage() {
             socket.emit("startGame");
         });
 
+        socket.on("error", (msg: string) => {
+            console.error("Room Error:", msg);
+            setError(msg);
+        });
+
         return () => {
             socket.off("updateRoom");
             socket.off("gameStarted");
@@ -95,6 +100,7 @@ export default function RoomPage() {
             socket.off("kicked");
             socket.off("banned");
             socket.off("autoTriggerStart");
+            socket.off("error");
         };
     }, [socket, router]);
 

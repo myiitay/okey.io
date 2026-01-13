@@ -71,8 +71,19 @@ function HomeContent() {
         }
     }, [searchParams, isLoaded, nickname, avatarId, socket, avatars]);
 
+    const [isConnected, setIsConnected] = useState(socket.connected);
+
     useEffect(() => {
         console.log("Socket instance:", socket.id, socket.connected);
+
+        const onConnect = () => setIsConnected(true);
+        const onDisconnect = () => setIsConnected(false);
+
+        socket.on("connect", onConnect);
+        socket.on("disconnect", onDisconnect);
+
+        // Initial check
+        setIsConnected(socket.connected);
 
         socket.on("roomCreated", (code: string) => {
             console.log("Room created:", code);
@@ -91,6 +102,8 @@ function HomeContent() {
         });
 
         return () => {
+            socket.off("connect", onConnect);
+            socket.off("disconnect", onDisconnect);
             socket.off("roomCreated");
             socket.off("joinedRoom");
             socket.off("error");
@@ -248,6 +261,12 @@ function HomeContent() {
                             </div>
                         )}
 
+                        {!isConnected && (
+                            <div className="mb-4 bg-yellow-100 border-2 border-yellow-400 text-yellow-700 px-4 py-3 rounded-2xl font-bold flex items-center gap-2">
+                                📡 Sunucuya bağlanılıyor...
+                            </div>
+                        )}
+
                         {/* Step 1: Avatar & Name */}
                         <div className="flex flex-col items-center mb-8">
                             <div className="relative group">
@@ -305,7 +324,8 @@ function HomeContent() {
                                 <button
                                     onMouseEnter={() => soundManager.play('hover')}
                                     onClick={handleCreate}
-                                    className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-black text-2xl py-6 rounded-3xl shadow-[0_10px_20px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all flex items-center justify-center gap-3"
+                                    disabled={!isConnected}
+                                    className={`w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-black text-2xl py-6 rounded-3xl shadow-[0_10px_20px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all flex items-center justify-center gap-3 ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
                                 >
                                     <span>🚀</span> {t("create_room")}
                                 </button>
@@ -322,7 +342,8 @@ function HomeContent() {
                                     <button
                                         onMouseEnter={() => soundManager.play('hover')}
                                         onClick={handleJoin}
-                                        className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-black text-xl py-4 rounded-3xl shadow-[0_8px_16px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all"
+                                        disabled={!isConnected}
+                                        className={`w-full bg-indigo-500 hover:bg-indigo-600 text-white font-black text-xl py-4 rounded-3xl shadow-[0_8px_16px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
                                     >
                                         {t("join_room")}
                                     </button>
