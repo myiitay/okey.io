@@ -112,7 +112,24 @@ export default function RoomPage() {
 
         socket.on("error", (msg: string) => {
             console.error("Room Error:", msg);
-            setError(msg);
+
+            const gameplayErrors = [
+                "You must draw before discarding",
+                "Not your turn",
+                "Did you already draw?",
+                "Must draw before discard",
+                "Tile not in hand",
+                "Missing tileId",
+                "Hand is not a winning hand!",
+                "Select a tile to finish with",
+                "Already drew"
+            ];
+
+            if (gameplayErrors.some(e => msg.includes(e))) {
+                alert("⚠️ " + msg);
+            } else {
+                setError(msg);
+            }
         });
 
         return () => {

@@ -560,6 +560,19 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
         const isTurn = pIdx !== undefined && pIdx !== -1 && gameState?.players[pIdx]?.isTurn;
 
         if (!isTurn || isDiscardAnimating || pIdx === undefined || pIdx === -1) return;
+
+        // Client-side validation: Must have 15 tiles to discard
+        if (gameState.players[pIdx].hand.length !== 15) {
+            // For MVP, just return or show quick hint. The server would error anyway, 
+            // but checking here prevents the "error" event roundtrip.
+            // We can use the existing disconnectMsg state for a generic 'warning' toast 
+            // but let's just trigger a sound or small UI shake if possible.
+            // For now, just blocking it is enough to stop the crash.
+            soundManager.play('error');
+            alert("Önce taş çekmelisiniz (veya elinizde 15 taş olmalı)!");
+            return;
+        }
+
         const tile = rackSlots.find(t => t?.id === tileId);
         if (!tile) return;
         setDiscardingTile(tile);
