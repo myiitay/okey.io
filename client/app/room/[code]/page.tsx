@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/utils/socket";
 import { GameBoard } from "@/components/GameBoard";
@@ -63,7 +63,11 @@ export default function RoomPage() {
         };
     }, [code, socket, roomData]);
 
+    const [isSpectator, setIsSpectator] = useState(false);
+
     useEffect(() => {
+        socket.on("isSpectator", (val: boolean) => setIsSpectator(val));
+
         socket.on("updateRoom", (data: RoomData) => {
             setRoomData(data);
         });
@@ -97,11 +101,13 @@ export default function RoomPage() {
 
         socket.on("kicked", (msg: string) => {
             alert(msg);
+            localStorage.removeItem("okey_session_token");
             router.push('/');
         });
 
         socket.on("banned", (msg: string) => {
             alert(msg);
+            localStorage.removeItem("okey_session_token");
             router.push('/');
         });
 
@@ -156,8 +162,14 @@ export default function RoomPage() {
         socket.emit("startGame");
     };
 
+    const handleAddBot = () => {
+        soundManager.play('click');
+        socket.emit("addBot");
+    };
+
     const handleLeave = () => {
         if (confirm(t("leave_confirm"))) {
+            localStorage.removeItem("okey_session_token");
             socket.disconnect();
             socket.connect();
             router.push('/');
@@ -170,11 +182,12 @@ export default function RoomPage() {
         }
     };
 
-    const handleBan = (playerId: string) => {
-        if (confirm(t("ban_confirm") || "Are you sure you want to BAN this player permanently from this room?")) {
-            socket.emit("banPlayer", playerId);
-        }
-    };
+
+    // Memoize currentUser to prevent infinite loop in GameBoard
+    const currentUser = useMemo(() => ({
+        id: socket.id as string,
+        name: roomData?.players.find(p => p.id === socket.id)?.name || ""
+    }), [socket.id, roomData?.players]);
 
     // Redirect if connected but not in player list (Ghost/Direct Link user)
     useEffect(() => {
@@ -209,7 +222,7 @@ export default function RoomPage() {
     </div>;
 
     if (roomData.gameStarted) {
-        return <GameBoard roomCode={code as string} currentUser={{ id: socket.id as string, name: "" }} gameMode={roomData.gameMode} />;
+        return <GameBoard roomCode={code as string} currentUser={currentUser} gameMode={roomData.gameMode} isSpectator={isSpectator} />;
     }
 
     // --- COUNTDOWN OVERLAY ---
@@ -231,6 +244,12 @@ export default function RoomPage() {
         <div className={`min-h-screen ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} flex flex-col items-center justify-center relative overflow-hidden font-sans p-4`}>
             {/* Background Atmosphere */}
             <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-red-900/40 via-[#2a0808] to-rose-900/40' : 'bg-gradient-to-br from-purple-900/40 via-[#0f0c29] to-blue-900/40'} pointer-events-none`}></div>
+
+            {isSpectator && (
+                <div className="absolute top-4 z-50 bg-blue-500/80 backdrop-blur-md px-6 py-2 rounded-full border border-blue-400/50 text-white font-bold animate-pulse shadow-[0_0_20px_rgba(59,130,246,0.5)]">
+                    👁️ {t("spectator_mode") || "İzleyici Modu: Oda Dolu"}
+                </div>
+            )}
             <div className={`absolute top-0 right-0 w-[500px] h-[500px] ${is101Mode ? 'bg-red-600/20' : 'bg-purple-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`}></div>
             <div className={`absolute bottom-0 left-0 w-[500px] h-[500px] ${is101Mode ? 'bg-rose-600/20' : 'bg-blue-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`} style={{ animationDelay: "1s" }}></div>
 
@@ -335,14 +354,6 @@ export default function RoomPage() {
                                                 >
                                                     👢
                                                 </button>
-                                                <button
-                                                    onMouseEnter={() => soundManager.play('hover')}
-                                                    onClick={() => { soundManager.play('click'); handleBan(player.id); }}
-                                                    className="bg-red-900/40 hover:bg-red-900/90 text-red-400 hover:text-white p-2 rounded-lg transition-colors border border-red-900/30 font-bold"
-                                                    title={t("ban")}
-                                                >
-                                                    🚫
-                                                </button>
                                             </div>
                                         )}
                                     </div>
@@ -351,9 +362,23 @@ export default function RoomPage() {
 
                             {/* Empty Slots */}
                             {Array.from({ length: Math.max(0, 4 - roomData.players.length) }).map((_, i) => (
-                                <div key={`empty-${i}`} className="border-2 border-dashed border-white/5 rounded-2xl p-4 flex items-center gap-4 opacity-50 select-none">
-                                    <div className="w-16 h-16 rounded-full bg-white/5 animate-pulse"></div>
-                                    <div className="h-4 w-32 bg-white/5 rounded animate-pulse"></div>
+                                <div key={`empty-${i}`} className={`border-2 border-dashed border-white/5 rounded-2xl p-4 flex items-center justify-between gap-4 transition-all ${i === 0 && isHost ? 'hover:border-yellow-500/30 hover:bg-white/5 cursor-pointer group/bot' : 'opacity-50 select-none'}`}>
+                                    <div className="flex items-center gap-4">
+                                        <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl ${i === 0 && isHost ? 'bg-white/10' : 'bg-white/5 animate-pulse'}`}>
+                                            {i === 0 && isHost ? "🤖" : ""}
+                                        </div>
+                                        <div className={`h-4 ${i === 0 && isHost ? 'w-auto text-white/40 font-bold' : 'w-32 bg-white/5 rounded animate-pulse'}`}>
+                                            {i === 0 && isHost ? "Bot Ekle" : ""}
+                                        </div>
+                                    </div>
+                                    {i === 0 && isHost && (
+                                        <button
+                                            onClick={handleAddBot}
+                                            className="bg-yellow-500/20 hover:bg-yellow-500/40 text-yellow-400 px-4 py-2 rounded-xl text-sm font-bold border border-yellow-500/30 transition-all opacity-0 group-hover/bot:opacity-100"
+                                        >
+                                            + EKLE
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -387,6 +412,6 @@ export default function RoomPage() {
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }

@@ -8,34 +8,23 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { soundManager } from "@/utils/soundManager";
 
 function HomeContent() {
+    const socket = getSocket();
+    const router = useRouter();
+    const { t, language, setLanguage } = useLanguage();
+
     const [nickname, setNickname] = useState("");
     const [avatarId, setAvatarId] = useState(0); // 0-7
     const [isLoaded, setIsLoaded] = useState(false);
     const [roomCode, setRoomCode] = useState("");
     const searchParams = useSearchParams();
 
-    // Load preferences on mount
-    useEffect(() => {
-        const savedName = localStorage.getItem("okey_nickname");
-        const savedAvatar = localStorage.getItem("okey_avatar");
-        if (savedName) setNickname(savedName);
-        if (savedAvatar) setAvatarId(parseInt(savedAvatar));
-        setIsLoaded(true);
-    }, []);
-
-    // Save preferences on change
-    useEffect(() => {
-        if (isLoaded) {
-            localStorage.setItem("okey_nickname", nickname);
-            localStorage.setItem("okey_avatar", avatarId.toString());
-        }
-    }, [nickname, avatarId, isLoaded]);
+    // Reconnection State
+    const [isRejoining, setIsRejoining] = useState(false);
 
     const [error, setError] = useState("");
-    const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
-    const router = useRouter();
-    const socket = getSocket();
-    const { t, language, setLanguage } = useLanguage();
+    const [activeTab, setActiveTab] = useState<'create' | 'join' | 'lobby'>('create');
+    const [rooms, setRooms] = useState<any[]>([]);
+    const [isConnected, setIsConnected] = useState(false);
 
     // Expanded Human Avatars (Preserved)
     const avatars = [
@@ -48,55 +37,123 @@ function HomeContent() {
         "🕴🏻", "🧘🏻‍♂️", "🧘🏻‍♀️", "🏄🏻‍♂️", "🏄🏻‍♀️", "🏊🏻‍♂️", "🏊🏻‍♀️", "⛹🏻‍♂️"
     ];
 
-    // Handle Auto-Join via URL - Moved after definitions to use avatars/socket
+
+
+
+    // Load preferences and Attempt Reconnection
+    useEffect(() => {
+        const savedName = localStorage.getItem("okey_nickname");
+        const savedAvatar = localStorage.getItem("okey_avatar");
+        if (savedName) setNickname(savedName);
+        if (savedAvatar) setAvatarId(parseInt(savedAvatar));
+
+        setIsLoaded(true);
+
+        const sessionToken = localStorage.getItem("okey_session_token");
+        if (sessionToken && !socket.connected) {
+            setIsRejoining(true);
+        }
+    }, []);
+
+    // Save preferences on change
+    useEffect(() => {
+        if (isLoaded) {
+            localStorage.setItem("okey_nickname", nickname);
+            localStorage.setItem("okey_avatar", avatarId.toString());
+        }
+    }, [nickname, avatarId, isLoaded]);
+
+    // Handle Auto-Join via URL
     useEffect(() => {
         const joinCode = searchParams.get('join');
-        if (joinCode && isLoaded) {
+        if (joinCode && isLoaded && !isRejoining) { // Don't auto-join if trying to rejoin session
             setRoomCode(joinCode.toUpperCase());
             setActiveTab('join');
 
-            // If we have a nickname, try to auto-join after a brief pause
             if (nickname) {
-                // Small delay to ensure socket/state is ready and user sees what's happening
                 const timer = setTimeout(() => {
                     console.log("Auto-joining room:", joinCode);
                     socket.emit("joinRoom", {
                         code: joinCode.toUpperCase(),
                         name: nickname,
-                        avatar: avatars[avatarId] // defaults to first if not loaded yet? No, persisted one.
+                        avatar: avatars[avatarId]
                     });
                 }, 500);
                 return () => clearTimeout(timer);
             }
         }
-    }, [searchParams, isLoaded, nickname, avatarId, socket, avatars]);
+    }, [searchParams, isLoaded, nickname, avatarId, socket, avatars, isRejoining]);
 
-    const [isConnected, setIsConnected] = useState(socket.connected);
-
+    // Polling or Initial Fetch for rooms when entering Lobby tab
     useEffect(() => {
-        console.log("Socket instance:", socket.id, socket.connected);
+        if (activeTab === 'lobby' && isConnected) {
+            socket.emit('getRooms');
+        }
+    }, [activeTab, isConnected]);
 
-        const onConnect = () => setIsConnected(true);
-        const onDisconnect = () => setIsConnected(false);
+    // Unified Socket Connection Effect
+    useEffect(() => {
+        const onConnect = () => {
+            console.log("Connected:", socket.id);
+            setIsConnected(true);
+            // Rejoin attempt
+            const token = localStorage.getItem("okey_session_token");
+            if (token) {
+                setIsRejoining(true);
+                socket.emit("rejoinGame", token);
+            }
+        };
+
+        const onDisconnect = () => {
+            console.log("Disconnected");
+            setIsConnected(false);
+        };
+
+        // If already connected when mounting (e.g. hydration)
+        if (socket.connected) {
+            setIsConnected(true);
+            onConnect();
+        }
 
         socket.on("connect", onConnect);
         socket.on("disconnect", onDisconnect);
 
-        // Initial check
-        setIsConnected(socket.connected);
-
         socket.on("roomCreated", (code: string) => {
-            console.log("Room created:", code);
             router.push(`/room/${code}`);
         });
 
         socket.on("joinedRoom", (code: string) => {
-            console.log("Joined room:", code);
             router.push(`/room/${code}`);
+        });
+
+        socket.on("sessionCreated", (token: string) => {
+            localStorage.setItem("okey_session_token", token);
+        });
+
+        socket.on("rejoinSuccess", (data: { roomCode: string, state: any }) => {
+            console.log("Rejoin successful to:", data.roomCode);
+            setIsRejoining(false);
+            router.push(`/room/${data.roomCode}`);
+        });
+
+        socket.on("roomListUpdate", (roomList: any[]) => {
+            setRooms(roomList);
+        });
+
+        socket.on("forceRedirect", (path: string) => {
+            localStorage.removeItem("okey_session_token");
+            setIsRejoining(false);
+            if (path !== '/') {
+                router.push(path);
+            }
         });
 
         socket.on("error", (msg: string) => {
             console.error("Socket error:", msg);
+            if (isRejoining && (msg.includes("Session") || msg.includes("expired"))) {
+                localStorage.removeItem("okey_session_token");
+                setIsRejoining(false);
+            }
             setError(msg);
             setTimeout(() => setError(""), 3000);
         });
@@ -106,9 +163,13 @@ function HomeContent() {
             socket.off("disconnect", onDisconnect);
             socket.off("roomCreated");
             socket.off("joinedRoom");
+            socket.off("sessionCreated");
+            socket.off("rejoinSuccess");
+            socket.off("roomListUpdate");
+            socket.off("forceRedirect");
             socket.off("error");
         };
-    }, [router, socket]);
+    }, [router, socket, isRejoining]);
 
     const handleCreate = () => {
         if (!nickname) {
@@ -135,7 +196,7 @@ function HomeContent() {
         socket.emit("joinRoom", { code: roomCode, name: nickname, avatar: avatars[avatarId] });
     };
 
-    // Background Tiles - Statically defined for consistency and performance
+    // Background Tiles
     const bgTilesData: { color: 'red' | 'black' | 'blue' | 'yellow' | 'fake'; value: number }[] = [
         { color: 'red', value: 7 }, { color: 'black', value: 11 }, { color: 'blue', value: 1 },
         { color: 'yellow', value: 13 }, { color: 'red', value: 12 }, { color: 'blue', value: 5 },
@@ -156,19 +217,12 @@ function HomeContent() {
         setTileStyles(styles);
     }, []);
 
-    // CSS Keyframes for smooth floating defined in globals.css
-
     return (
-        // Premium Dynamic Gradient Background
         <div className="min-h-screen overflow-hidden relative flex flex-col items-center justify-center font-sans bg-[#0f0c29]">
-
-
             {/* --- Animated Mesh Gradient --- */}
             <div className="absolute inset-0 bg-gradient-to-br from-[#24243e] via-[#302b63] to-[#0f0c29] animate-gradient-xy"></div>
             <div className="absolute top-[-50%] left-[-50%] w-[200%] h-[200%] bg-[radial-gradient(circle_farthest-corner_at_center,rgba(76,29,149,0.3)_0%,transparent_50%)] animate-pulse-slow"></div>
             <div className="absolute bottom-[-50%] right-[-50%] w-[200%] h-[200%] bg-[radial-gradient(circle_farthest-corner_at_center,rgba(236,72,153,0.2)_0%,transparent_50%)] animate-pulse-slow" style={{ animationDelay: '2s' }}></div>
-
-            {/* --- Decorative Grid --- */}
             <div className="absolute inset-0 opacity-[0.05] bg-[linear-gradient(rgba(255,255,255,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.1)_1px,transparent_1px)] [background-size:60px_60px] pointer-events-none"></div>
 
             {/* --- Language Toggle --- */}
@@ -181,12 +235,10 @@ function HomeContent() {
                 </button>
             </div>
 
-            {/* --- 101 Mode Entry (Top Left) --- */}
+            {/* --- 101 Mode Entry --- */}
             <div className="absolute top-8 left-8 z-50 group">
                 <div className="relative">
-                    {/* Static Text with Faster Color Pulse & SVG Arrow */}
                     <div className="absolute -right-48 top-1/2 -translate-y-1/2 flex items-center gap-3 animate-color-pulse font-bold font-handwriting">
-                        {/* Custom Red Arrow SVG */}
                         <svg width="40" height="20" viewBox="0 0 40 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-red-600">
                             <path d="M2 10H38M2 10L10 2M2 10L10 18" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
@@ -196,27 +248,13 @@ function HomeContent() {
                     <button
                         onMouseEnter={() => soundManager.play('hover')}
                         onClick={() => { soundManager.play('click'); router.push('/101'); }}
-                        className="
-                            relative w-20 h-20 
-                            bg-gradient-to-br from-red-600 to-rose-700 
-                            text-white 
-                            shadow-[0_10px_25px_rgba(220,38,38,0.5)] 
-                            border-b-4 border-r-4 border-red-900 
-                            hover:scale-110 active:scale-95 transition-all duration-300
-                            flex items-center justify-center
-                            overflow-hidden
-                        "
-                        style={{
-                            borderRadius: '30% 70% 70% 30% / 30% 30% 70% 70%' // Asymmetric Blob Shape
-                        }}
+                        className="relative w-20 h-20 bg-gradient-to-br from-red-600 to-rose-700 text-white shadow-[0_10px_25px_rgba(220,38,38,0.5)] border-b-4 border-r-4 border-red-900 
+                            hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center overflow-hidden"
+                        style={{ borderRadius: '30% 70% 70% 30% / 30% 30% 70% 70%' }}
                     >
                         <span className="text-2xl font-black relative z-10 -rotate-12 group-hover:rotate-0 transition-transform">101</span>
-
-                        {/* Shine Effect */}
                         <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/30 to-transparent translate-y-full group-hover:translate-y-[-100%] transition-transform duration-700"></div>
                     </button>
-
-                    {/* Floating Badge */}
                     <div className="absolute -top-2 -right-2 bg-yellow-400 text-black text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm animate-bounce">
                         YENİ
                     </div>
@@ -238,7 +276,7 @@ function HomeContent() {
 
             <div className="z-10 w-full max-w-xl px-4 relative flex flex-col items-center">
 
-                {/* --- Fun Logo --- */}
+                {/* --- Logo --- */}
                 <div className="mb-8 relative group cursor-default">
                     <h1 className="text-8xl font-black text-white tracking-tighter drop-shadow-[0_8px_0_rgba(0,0,0,0.2)] transform rotate-[-3deg] hover:rotate-[3deg] transition-transform duration-300">
                         OKEY<span className="text-yellow-300">.IO</span>
@@ -247,110 +285,167 @@ function HomeContent() {
                     <div className="absolute -bottom-4 -left-6 text-6xl animate-pulse" style={{ animationDuration: '3s' }}>✨</div>
                 </div>
 
-                {/* --- Main Fun Card --- */}
+                {/* --- Main Card --- */}
                 <div className="w-full bg-white rounded-[40px] shadow-[0_20px_60px_rgba(0,0,0,0.3)] border-b-8 border-black/10 overflow-hidden relative">
-
-                    {/* Header bar decoration */}
                     <div className="h-4 w-full bg-gradient-to-r from-yellow-400 via-orange-400 to-red-400"></div>
 
                     <div className="p-8">
-                        {/* Error Bubble */}
                         {error && (
                             <div className="mb-4 bg-red-100 border-2 border-red-400 text-red-600 px-4 py-3 rounded-2xl font-bold flex items-center gap-2 animate-bounce">
                                 🛑 {error}
                             </div>
                         )}
 
-                        {!isConnected && (
-                            <div className="mb-4 bg-yellow-100 border-2 border-yellow-400 text-yellow-700 px-4 py-3 rounded-2xl font-bold flex items-center gap-2">
-                                📡 Sunucuya bağlanılıyor...
+                        {isRejoining ? (
+                            <div className="flex flex-col items-center justify-center py-12">
+                                <div className="animate-spin text-6xl mb-4">🔄</div>
+                                <h2 className="text-2xl font-black text-indigo-600 mb-2">Eski Oturuma Bağlanılıyor...</h2>
+                                <p className="text-gray-500 font-medium">Lütfen bekleyin...</p>
                             </div>
-                        )}
+                        ) : (
+                            <>
+                                {!isConnected && (
+                                    <div className="mb-4 bg-yellow-100 border-2 border-yellow-400 text-yellow-700 px-4 py-3 rounded-2xl font-bold flex items-center gap-2">
+                                        📡 Sunucuya bağlanılıyor...
+                                    </div>
+                                )}
 
-                        {/* Step 1: Avatar & Name */}
-                        <div className="flex flex-col items-center mb-8">
-                            <div className="relative group">
-                                <div className="w-32 h-32 bg-sky-100 rounded-full border-4 border-white shadow-xl flex items-center justify-center text-7xl mb-4 relative hover:scale-105 transition-transform cursor-pointer overflow-visible">
-                                    {avatars[avatarId]}
-                                </div>
-                                <div className="absolute -bottom-2 -right-2 bg-yellow-400 text-black p-2 rounded-full border-4 border-white shadow-sm text-sm font-bold">
-                                    ✏️
-                                </div>
-                                {/* Dropdown */}
-                                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-4 bg-white p-3 rounded-2xl shadow-xl border-2 border-gray-100 w-80 max-h-64 overflow-y-auto z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all grid grid-cols-5 gap-2 custom-scrollbar">
-                                    {avatars.map((av, i) => (
-                                        <button
-                                            key={i}
-                                            onMouseEnter={() => soundManager.play('hover')}
-                                            onClick={() => { soundManager.play('click'); setAvatarId(i); }}
-                                            className={`w-12 h-12 flex items-center justify-center text-3xl rounded-xl hover:bg-gray-100 transition-colors ${avatarId === i ? 'bg-sky-100 ring-2 ring-sky-300' : ''}`}
-                                        >
-                                            {av}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
+                                {/* --- Inputs --- */}
+                                <div className="flex flex-col items-center mb-8">
+                                    <div className="relative group">
+                                        <div className="w-32 h-32 bg-sky-100 rounded-full border-4 border-white shadow-xl flex items-center justify-center text-7xl mb-4 relative hover:scale-105 transition-transform cursor-pointer overflow-visible">
+                                            {avatars[avatarId]}
+                                        </div>
+                                        <div className="absolute -bottom-2 -right-2 bg-yellow-400 text-black p-2 rounded-full border-4 border-white shadow-sm text-sm font-bold">
+                                            ✏️
+                                        </div>
+                                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-4 bg-white p-3 rounded-2xl shadow-xl border-2 border-gray-100 w-80 max-h-64 overflow-y-auto z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all grid grid-cols-5 gap-2 custom-scrollbar">
+                                            {avatars.map((av, i) => (
+                                                <button
+                                                    key={i}
+                                                    onMouseEnter={() => soundManager.play('hover')}
+                                                    onClick={() => { soundManager.play('click'); setAvatarId(i); }}
+                                                    className={`w-12 h-12 flex items-center justify-center text-3xl rounded-xl hover:bg-gray-100 transition-colors ${avatarId === i ? 'bg-sky-100 ring-2 ring-sky-300' : ''}`}
+                                                >
+                                                    {av}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
 
-                            <input
-                                type="text"
-                                value={nickname}
-                                onChange={(e) => setNickname(e.target.value)}
-                                className="w-full bg-gray-50 border-b-4 border-gray-200 focus:border-indigo-500 rounded-xl px-4 py-4 text-center text-2xl font-black text-gray-700 placeholder-gray-300 outline-none transition-all"
-                                placeholder={t("nickname_placeholder")}
-                            />
-                        </div>
-
-                        {/* Step 2: Tabs */}
-                        <div className="bg-gray-100 p-2 rounded-3xl flex gap-2">
-                            <button
-                                onMouseEnter={() => soundManager.play('hover')}
-                                onClick={() => { soundManager.play('click'); setActiveTab('create'); }}
-                                className={`flex-1 py-3 rounded-2xl font-bold text-lg transition-all ${activeTab === 'create' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
-                            >
-                                {t("create_room")}
-                            </button>
-                            <button
-                                onMouseEnter={() => soundManager.play('hover')}
-                                onClick={() => { soundManager.play('click'); setActiveTab('join'); }}
-                                className={`flex-1 py-3 rounded-2xl font-bold text-lg transition-all ${activeTab === 'join' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
-                            >
-                                {t("join_room")}
-                            </button>
-                        </div>
-
-                        {/* Step 3: Action Area */}
-                        <div className="mt-8">
-                            {activeTab === 'create' ? (
-                                <button
-                                    onMouseEnter={() => soundManager.play('hover')}
-                                    onClick={handleCreate}
-                                    disabled={!isConnected}
-                                    className={`w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-black text-2xl py-6 rounded-3xl shadow-[0_10px_20px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all flex items-center justify-center gap-3 ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                >
-                                    <span>🚀</span> {t("create_room")}
-                                </button>
-                            ) : (
-                                <div className="space-y-4 animate-scaleIn">
                                     <input
                                         type="text"
-                                        value={roomCode}
-                                        onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                                        maxLength={4}
-                                        placeholder="CODE"
-                                        className="w-full bg-white border-4 border-indigo-100 focus:border-indigo-500 rounded-2xl px-4 py-4 text-center font-mono text-3xl font-black text-indigo-600 outline-none uppercase placeholder-indigo-100"
+                                        value={nickname}
+                                        onChange={(e) => setNickname(e.target.value)}
+                                        className="w-full bg-gray-50 border-b-4 border-gray-200 focus:border-indigo-500 rounded-xl px-4 py-4 text-center text-2xl font-black text-gray-700 placeholder-gray-300 outline-none transition-all"
+                                        placeholder={t("nickname_placeholder")}
                                     />
+                                </div>
+
+                                <div className="bg-gray-100 p-2 rounded-3xl flex gap-2">
                                     <button
                                         onMouseEnter={() => soundManager.play('hover')}
-                                        onClick={handleJoin}
-                                        disabled={!isConnected}
-                                        className={`w-full bg-indigo-500 hover:bg-indigo-600 text-white font-black text-xl py-4 rounded-3xl shadow-[0_8px_16px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        onClick={() => { soundManager.play('click'); setActiveTab('create'); }}
+                                        className={`flex-1 py-3 rounded-2xl font-bold text-lg transition-all ${activeTab === 'create' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
+                                    >
+                                        {t("create_room")}
+                                    </button>
+                                    <button
+                                        onMouseEnter={() => soundManager.play('hover')}
+                                        onClick={() => { soundManager.play('click'); setActiveTab('join'); }}
+                                        className={`flex-1 py-3 rounded-2xl font-bold text-lg transition-all ${activeTab === 'join' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
                                     >
                                         {t("join_room")}
                                     </button>
+                                    <button
+                                        onMouseEnter={() => soundManager.play('hover')}
+                                        onClick={() => { soundManager.play('click'); setActiveTab('lobby'); }}
+                                        className={`flex-1 py-3 rounded-2xl font-bold text-lg transition-all ${activeTab === 'lobby' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
+                                    >
+                                        LOBİ
+                                    </button>
                                 </div>
-                            )}
-                        </div>
 
+                                <div className="mt-8">
+                                    {activeTab === 'create' ? (
+                                        <button
+                                            onMouseEnter={() => soundManager.play('hover')}
+                                            onClick={handleCreate}
+                                            disabled={!isConnected}
+                                            className={`w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-black text-2xl py-6 rounded-3xl shadow-[0_10px_20px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all flex items-center justify-center gap-3 ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        >
+                                            <span>🚀</span> {t("create_room")}
+                                        </button>
+                                    ) : activeTab === 'join' ? (
+                                        <div className="space-y-4 animate-scaleIn">
+                                            <input
+                                                type="text"
+                                                value={roomCode}
+                                                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                                                maxLength={4}
+                                                placeholder="CODE"
+                                                className="w-full bg-white border-4 border-indigo-100 focus:border-indigo-500 rounded-2xl px-4 py-4 text-center font-mono text-3xl font-black text-indigo-600 outline-none uppercase placeholder-indigo-100"
+                                            />
+                                            <button
+                                                onMouseEnter={() => soundManager.play('hover')}
+                                                onClick={handleJoin}
+                                                disabled={!isConnected}
+                                                className={`w-full bg-indigo-500 hover:bg-indigo-600 text-white font-black text-xl py-4 rounded-3xl shadow-[0_8px_16px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                            >
+                                                {t("join_room")}
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        /* LOBBY LIST */
+                                        <div className="space-y-3 animate-scaleIn max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                                            {rooms.length === 0 ? (
+                                                <div className="text-center py-8 text-gray-400">
+                                                    <div className="text-4xl mb-2">📭</div>
+                                                    <p>Oda bulunamadı</p>
+                                                </div>
+                                            ) : (
+                                                rooms.map((room) => (
+                                                    <div key={room.id} className="bg-white border-2 border-indigo-100 rounded-2xl p-3 flex items-center justify-between hover:border-indigo-300 transition-colors group">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold text-white shadow-md ${room.mode === '101' ? 'bg-red-500' : 'bg-indigo-500'}`}>
+                                                                {room.mode === '101' ? '101' : '🎲'}
+                                                            </div>
+                                                            <div>
+                                                                <div className="font-black text-gray-700 font-mono text-lg leading-none">
+                                                                    {room.id}
+                                                                </div>
+                                                                <div className="text-xs font-bold text-gray-400 uppercase">
+                                                                    {room.status === 'Playing' ? 'Oynanıyor' : 'Bekleniyor'}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded-lg">
+                                                                <span className="text-xs">👤</span>
+                                                                <span className="text-xs font-black text-gray-600">{room.count}/{room.max}</span>
+                                                            </div>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setRoomCode(room.id);
+                                                                    // Short delay to let state update then auto-click join or just emit direct
+                                                                    soundManager.play('click');
+                                                                    socket.emit("joinRoom", { code: room.id, name: nickname, avatar: avatars[avatarId] });
+                                                                }}
+                                                                disabled={!isConnected || room.count >= room.max || room.status === 'Playing'}
+                                                                className={`px-4 py-2 rounded-xl font-bold text-white text-sm shadow-sm transition-transform active:scale-95 ${room.count >= room.max || room.status === 'Playing' ? 'bg-gray-300 cursor-not-allowed' : 'bg-indigo-500 hover:bg-indigo-600'}`}
+                                                            >
+                                                                KATIL
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 

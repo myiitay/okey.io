@@ -15,12 +15,12 @@ import {
     DragEndEvent,
     DragStartEvent,
     MouseSensor,
-    TouchSensor,
-    useDndMonitor
+    TouchSensor
 } from '@dnd-kit/core';
 import { useLanguage } from "@/contexts/LanguageContext";
 import { motion, AnimatePresence } from 'framer-motion';
-import { TileData } from '../types/game';
+import { TileData, GameState } from './game/types';
+import { arrangeByGroups, arrangeByColor, arrangeByValue, arrangeByPotential, getColorName, getRelativePlayer } from '../utils/gameLogics';
 // Imports for extracted components
 import { DraggableTile, Tile } from './game/DraggableTile';
 import { PlayerAvatar } from './game/PlayerAvatar';
@@ -28,29 +28,27 @@ import { OpponentRack } from './game/OpponentRack';
 import { Chat } from './game/Chat';
 import { soundManager } from '@/utils/soundManager';
 import { SoundToggle } from './game/SoundToggle';
+import { WinnerOverlay } from './game/WinnerOverlay';
+import { Leaderboard } from './game/Leaderboard';
+import { FinishZone } from './game/FinishZone';
 
 
 interface GameBoardProps {
     roomCode: string;
     currentUser: { id: string; name: string };
     gameMode?: '101' | 'standard';
+    isSpectator?: boolean;
 }
 
-// Removed inline definition of TileData as it's now imported from '../game/types'
-
-interface GameState {
-    players: any[];
-    indicator: TileData;
-    okeyTile: TileData;
-    centerCount: number;
-    turnIndex: number;
-    status: 'PLAYING' | 'FINISHED';
-    winnerId?: string;
-}
 
 // Removed inline definition of DraggableTile component
 
-export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gameMode }) => {
+export const GameBoard: React.FC<GameBoardProps> = ({
+    roomCode,
+    currentUser,
+    gameMode,
+    isSpectator = false
+}) => {
     const is101Mode = gameMode === '101';
     const socket = getSocket();
     const [gameState, setGameState] = useState<GameState | null>(null);
@@ -77,11 +75,21 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
     const [discardingTile, setDiscardingTile] = useState<TileData | null>(null);
     const [isDiscardAnimating, setIsDiscardAnimating] = useState(false);
     const [isArranging, setIsArranging] = useState(false);
-
-    // Auto-arrange mode cycling
     const [arrangeMode, setArrangeMode] = useState<'groups' | 'color' | 'value' | 'potential'>('groups');
-
     const [roomData, setRoomData] = useState<any>(null);
+    const { t } = useLanguage();
+    const [isPlayingIntro, setIsPlayingIntro] = useState(false);
+    const [introStep, setIntroStep] = useState<'dealing' | 'revealing' | 'fading' | 'done'>('done');
+    const [disconnectedPlayers, setDisconnectedPlayers] = useState<Set<string>>(new Set());
+    const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+
+    const sensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+        useSensor(KeyboardSensor),
+        useSensor(MouseSensor),
+        useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } })
+    );
+
     const [showOkeyHint, setShowOkeyHint] = useState(false);
 
     // One-time Okey hint logic
@@ -112,6 +120,13 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
                 const pMap: Record<string, { name: string, avatar: string }> = {};
                 data.players.forEach((p: any) => { pMap[p.id] = { name: p.name, avatar: p.avatar }; });
                 setPlayersMap(pMap);
+
+                // Sync disconnected players from room data
+                const disconnectedSet = new Set<string>();
+                data.players.forEach((p: any) => {
+                    if (p.connected === false) disconnectedSet.add(p.id);
+                });
+                setDisconnectedPlayers(disconnectedSet);
             }
         });
 
@@ -220,17 +235,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
         }
     }, [gameState, currentUser.id, drawStatus]);
 
-    const { t } = useLanguage();
-
-    const [isPlayingIntro, setIsPlayingIntro] = useState(true);
-    // Sequence: dealing -> revealing (Joker) -> fading -> done
-    const [introStep, setIntroStep] = useState<'dealing' | 'revealing' | 'fading' | 'done'>('dealing');
-
-    // Sensors for DnD
-    const sensors = useSensors(
-        useSensor(PointerSensor),
-        useSensor(KeyboardSensor)
-    );
 
 
 
@@ -250,6 +254,26 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
         }
     }, [gameState, currentUser.id, lastTurnState]);
 
+    // Intro Animation Sequence
+    useEffect(() => {
+        if (introStep === 'dealing') {
+            soundManager.play('dealing', 0.02);
+            // Move to revealing after some time or wait for socket? 
+            // The original logic had a timer. Let's keep it simple.
+            // If server emits jokerRevealed, it sets introStep to 'revealing'.
+            return;
+        } else if (introStep === 'revealing') {
+            const timer = setTimeout(() => {
+                setIntroStep('fading');
+                setTimeout(() => {
+                    setIntroStep('done');
+                    setIsPlayingIntro(false);
+                }, 1000);
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [introStep]);
+
     // Guard against unwanted refresh
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -260,80 +284,80 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
     }, []);
 
-    // Intro Animation Sequence
-    useEffect(() => {
-        if (introStep === 'dealing') {
-            soundManager.play('dealing', 0.02);
-            return;
-        } else if (introStep === 'revealing') {
-            // Show Joker reveal for 4 seconds (balanced - not too fast, not too slow)
-            const timer = setTimeout(() => {
-                setIntroStep('fading');
-                setTimeout(() => {
-                    setIntroStep('done');
-                    setIsPlayingIntro(false);
-                }, 1000); // Fade out duration
-            }, 3000); // 3 seconds to see the Joker (shortened)
-            return () => clearTimeout(timer);
-        }
-    }, [introStep]);
-
     const handleLeave = () => {
         if (window.confirm(t("leave_confirm"))) {
+            localStorage.removeItem("okey_session_token");
             window.location.href = '/';
         }
     };
 
     // State for animations
-    const [disconnectedPlayers, setDisconnectedPlayers] = useState<Set<string>>(new Set());
 
     useEffect(() => {
-        socket.on('gameState', (state: GameState) => {
+        const onGameState = (state: GameState) => {
             setGameState(state);
             const myIdx = state.players.findIndex(p => p.id === currentUser.id);
             if (myIdx !== -1) {
                 setLocalHand(state.players[myIdx].hand);
             }
-        });
+        };
 
-        socket.on('updateRoom', (data: any) => {
-            const map: Record<string, { name: string, avatar: string }> = {};
-            data.players.forEach((p: any) => map[p.id] = { name: p.name, avatar: p.avatar || "👤" });
-            setPlayersMap(map);
-        });
+        const onGameStarted = (state?: GameState) => {
+            if (state) setGameState(state);
+            setIsPlayingIntro(true);
+            setIntroStep('dealing');
+        };
 
-        // Handle Player Left / Disconnect for Animation
-        socket.on('playerLeft', (playerId: string) => {
-            setDisconnectedPlayers(prev => new Set(prev).add(playerId));
+        const onPlayerLeft = (playerId: string) => {
+            setDisconnectedPlayers(prev => {
+                const newSet = new Set(prev);
+                newSet.add(playerId);
+                return newSet;
+            });
 
-            // Show notification
-            const info = playersMap[playerId];
-            if (info) {
-                setShowSideHint(true); // Reuse existing hint or create new one?
-                // Let's create a custom temporary alert div in rendering
-                setDisconnectMsg(`${info.name} oyundan ayrıldı!`);
-                setTimeout(() => setDisconnectMsg(null), 3000);
-            }
-        });
+            // Show notification - using a ref or just accepting slight closure staleness
+            // Since playersMap is updated via updateRoom, we can use a functional update or just check current state
+            setPlayersMap(currentMap => {
+                const info = currentMap[playerId];
+                if (info) {
+                    setShowSideHint(true);
+                    setDisconnectMsg(`${info.name} oyundan ayrıldı!`);
+                    setTimeout(() => setDisconnectMsg(null), 3000);
+                }
+                return currentMap;
+            });
+        };
 
-        // Handle Joker Reveal (after dealing animation)
-        socket.on('jokerRevealed', (data: { indicator: any, okeyTile: any }) => {
+        const onError = (msg: string) => {
+            console.error("Game Error:", msg);
+            soundManager.play('error');
+            setDisconnectMsg(msg);
+            setTimeout(() => setDisconnectMsg(null), 4000);
+        };
+
+        const onJokerRevealed = (data: { indicator: any, okeyTile: any }) => {
             console.log('[jokerRevealed] Received Joker reveal:', data);
             soundManager.play('joker_reveal', 0.5);
-            // Trigger the revealing animation step
             setIntroStep('revealing');
-        });
+        };
+
+        socket.on('gameState', onGameState);
+        socket.on('gameStarted', onGameStarted);
+        socket.on('playerLeft', onPlayerLeft);
+        socket.on('error', onError);
+        socket.on('jokerRevealed', onJokerRevealed);
 
         socket.emit('getGameState');
-        socket.emit('checkRoom', roomCode); // Request player info (names/avatars)
+        socket.emit('checkRoom', roomCode);
 
         return () => {
-            socket.off('gameState');
-            socket.off('updateRoom');
-            socket.off('playerLeft');
-            socket.off('jokerRevealed');
+            socket.off('gameState', onGameState);
+            socket.off('gameStarted', onGameStarted);
+            socket.off('playerLeft', onPlayerLeft);
+            socket.off('jokerRevealed', onJokerRevealed);
+            socket.off('error', onError);
         };
-    }, [socket, currentUser.id, roomCode]);
+    }, [socket, currentUser.id, roomCode]); // Removed playersMap from dependencies
 
     const handleDragStart = () => {
         // soundManager.play('grab');
@@ -386,175 +410,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
         return <div ref={setNodeRef} className="absolute inset-0 z-50 cursor-pointer" />;
     };
 
-    const WinnerOverlay = () => {
-        if (!gameState?.winnerId || gameState.status !== 'FINISHED') return null;
-
-        const isWinner = gameState.winnerId === currentUser.id;
-        useEffect(() => {
-            if (isWinner) soundManager.play('win');
-            else soundManager.play('lose');
-        }, []);
-
-        const winner = roomData?.players?.find((p: any) => p.id === gameState.winnerId);
-        if (!winner) return null;
-
-        const readyCount = roomData?.restartCount || 0;
-        const totalCount = roomData?.players?.length || 4;
-        const isReady = roomData?.players?.find((p: any) => p.id === currentUser.id)?.readyToRestart;
-
-        return (
-            <div className="absolute inset-0 z-[200] bg-black/80 flex items-center justify-center backdrop-blur-md animate-in fade-in duration-700">
-                {/* Celebratory Background Particles */}
-                <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                    {Array.from({ length: 20 }).map((_, i) => (
-                        <div
-                            key={i}
-                            className="absolute w-2 h-2 bg-yellow-400 rounded-full animate-bounce"
-                            style={{
-                                left: `${Math.random() * 100}%`,
-                                top: `${Math.random() * 100}%`,
-                                animationDelay: `${Math.random() * 2}s`,
-                                opacity: Math.random()
-                            }}
-                        ></div>
-                    ))}
-                </div>
-
-                <div className="bg-gradient-to-b from-white/10 to-white/5 border border-white/20 p-12 rounded-[3rem] text-center shadow-[0_0_100px_rgba(234,179,8,0.3)] max-w-xl w-full mx-4 backdrop-blur-2xl relative overflow-hidden group">
-                    <div className="absolute inset-0 bg-yellow-500/5 group-hover:bg-yellow-500/10 transition-colors pointer-events-none"></div>
-
-                    {/* Winner Badge */}
-                    <div className="relative mb-8 flex flex-col items-center">
-                        <div className="w-32 h-32 rounded-full bg-yellow-400 p-1 shadow-[0_0_50px_rgba(234,179,8,0.5)] relative z-10 transition-transform group-hover:scale-110 duration-500">
-                            <div className="w-full h-full rounded-full bg-black/10 flex items-center justify-center text-7xl">
-                                {winner.avatar}
-                            </div>
-                            <div className="absolute -bottom-2 -right-2 bg-yellow-500 text-black w-10 h-10 rounded-full flex items-center justify-center text-2xl font-black border-4 border-white">
-                                👑
-                            </div>
-                        </div>
-                    </div>
-
-                    <h1 className="text-5xl font-black mb-2 text-white uppercase tracking-widest drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
-                        {winner.id === currentUser.id ? "TABRİKLER!" : "OYUN BİTTİ"}
-                    </h1>
-                    <p className="text-2xl mb-8 text-yellow-400 font-bold uppercase tracking-widest">
-                        {winner.name} KAZANDI!
-                    </p>
-
-                    <div className="flex flex-col items-center gap-6">
-                        <div className="flex items-center gap-4">
-                            <button
-                                onClick={() => {
-                                    soundManager.play('click');
-                                    if (typeof window !== 'undefined') window.location.href = '/';
-                                }}
-                                className="group relative bg-white/5 hover:bg-white/10 text-white/50 hover:text-white p-4 rounded-full border border-white/10 transition-all hover:scale-110 active:scale-95 flex items-center justify-center"
-                                title="Ana Sayfaya Dön"
-                            >
-                                <span className="text-3xl">↺</span>
-                                <div className="absolute inset-0 rounded-full bg-white/5 opacity-0 group-hover:opacity-100 animate-ping scale-150"></div>
-                            </button>
-
-                            <button
-                                onMouseEnter={() => soundManager.play('hover')}
-                                onClick={() => { soundManager.play('click'); handleRestartVote(); }}
-                                disabled={isReady}
-                                className={`
-                                    relative group overflow-hidden px-12 py-4 rounded-full font-black text-xl transition-all duration-300
-                                    ${isReady ?
-                                        (is101Mode ? 'bg-red-500/20 text-red-400 border border-red-500/50 grayscale' : 'bg-green-500/20 text-green-400 border border-green-500/50 grayscale') :
-                                        (is101Mode ? 'bg-red-600 text-white hover:bg-red-500 hover:scale-105 active:scale-95 shadow-[0_10px_30px_rgba(0,0,0,0.3)]' : 'bg-green-600 text-white hover:bg-green-500 hover:scale-105 active:scale-95 shadow-[0_10px_30px_rgba(0,0,0,0.3)]')
-                                    }
-                                `}
-                            >
-                                <span className="relative z-10">
-                                    {isReady ? "BEKLENİYOR..." : "TEKRAR OYNA"}
-                                </span>
-                                {!isReady && <div className="absolute inset-0 bg-white/20 translate-x-full group-hover:translate-x-0 transition-transform duration-500 skew-x-12"></div>}
-                            </button>
-                        </div>
-
-                        {/* Consensus Tracker */}
-                        <div className="flex flex-col items-center gap-1">
-                            <div className="text-white/40 text-sm font-bold tracking-widest uppercase">
-                                HERKES HEMFİKİR OLMALI
-                            </div>
-                            <div className="flex gap-2">
-                                {roomData?.players?.map((p: any) => (
-                                    <div
-                                        key={p.id}
-                                        title={p.name}
-                                        className={`w-3 h-3 rounded-full border border-white/10 transition-all duration-500 ${p.readyToRestart ? (is101Mode ? 'bg-red-500 shadow-[0_0_10px_red] scale-125' : 'bg-green-500 shadow-[0_0_10px_green] scale-125') : 'bg-white/10'}`}
-                                    />
-                                ))}
-                            </div>
-                            <div className={`text-lg font-black tabular-nums ${is101Mode ? 'text-red-400' : 'text-green-400'}`}>
-                                {readyCount} / {totalCount}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    const Leaderboard = () => {
-        if (!roomData?.winScores || Object.keys(roomData.winScores).length === 0) return null;
-
-        const scores = Object.entries(roomData.winScores).sort((a: any, b: any) => b[1] - a[1]);
-
-        return (
-            <div className="absolute top-4 right-4 z-40 bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 p-4 shadow-2xl transition-all hover:border-white/20 group">
-                <div className="flex items-center gap-2 mb-3 border-b border-white/10 pb-2">
-                    <span className="text-yellow-400 text-xl">🏆</span>
-                    <span className="text-white font-black text-sm uppercase tracking-widest">Skor Tablosu</span>
-                </div>
-                <div className="flex flex-col gap-2 min-w-[150px]">
-                    {scores.map(([name, score]: any) => (
-                        <div key={name} className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-xs">
-                                    {roomData.players.find((p: any) => p.name === name)?.avatar || "👤"}
-                                </div>
-                                <span className={`text-xs font-bold ${name === currentUser.name ? 'text-yellow-400' : 'text-white/70'}`}>{name}</span>
-                            </div>
-                            <span className="text-xs font-black text-white bg-white/10 px-2 py-0.5 rounded-full">{score}</span>
-                        </div>
-                    ))}
-                </div>
-                {/* Micro animation for excitement */}
-                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-0 h-[2px] bg-yellow-500 group-hover:w-[80%] transition-all duration-500"></div>
-            </div>
-        );
-    };
-
-    const FinishZone = () => {
-        const { setNodeRef, isOver } = useDroppable({ id: 'finish-zone' });
-        // Assuming 'isMyTurn' is available in the scope where FinishZone is rendered
-        // For example, it could be derived from gameState:
-        const isMyTurn = gameState?.players.find(p => p.id === currentUser.id)?.isTurn;
-
-        if (!isMyTurn) return null;
-
-        return (
-            <div
-                ref={setNodeRef}
-                className={`
-                    absolute top-1/2 -translate-y-1/2 right-[-260px] w-24 h-32 rounded-3xl border-4 border-dashed transition-all duration-300 flex flex-col items-center justify-center gap-2
-                    ${isOver ? (is101Mode ? 'bg-red-500/20 border-red-400 shadow-[0_0_30px_rgba(255,0,0,0.3)]' : 'bg-yellow-500/20 border-yellow-400 shadow-[0_0_30px_rgba(255,215,0,0.3)]') : 'bg-white/5 border-white/20 hover:bg-white/10'}
-                    scale-110
-                `}
-            >
-                <div className={`text-4xl transition-transform duration-300 ${isOver ? 'scale-125 rotate-12' : ''}`}>🏆</div>
-                <div className="text-[10px] font-black text-white/50 text-center uppercase tracking-tighter leading-none">
-                    BİTİRMEK <br /> İÇİN BURAYA
-                </div>
-                {isOver && <div className={`absolute inset-0 rounded-3xl animate-ping border-4 ${is101Mode ? 'border-red-400/50' : 'border-yellow-400/50'}`}></div>}
-            </div>
-        );
-    };
-
+    /* EXTRACTED COMPONENTS USED IN MAIN JSX */
     const handleDiscard = (tileId: number) => {
         const pIdx = gameState?.players.findIndex(p => p.id === currentUser.id);
         const isTurn = pIdx !== undefined && pIdx !== -1 && gameState?.players[pIdx]?.isTurn;
@@ -642,10 +498,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
     };
 
     const handleAutoArrange = () => {
-        if (isArranging) return;
+        if (isArranging || !gameState) return;
         soundManager.play('click');
         setIsArranging(true);
-        setTimeout(() => setIsArranging(false), 1000);
+
+        const allTiles = rackSlots.filter((t): t is TileData => t !== null);
+        if (allTiles.length === 0) {
+            setIsArranging(false);
+            return;
+        }
 
         // Cycle to next mode
         const modes: ('groups' | 'color' | 'value' | 'potential')[] = ['groups', 'color', 'value', 'potential'];
@@ -653,18 +514,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
         const nextMode = modes[(currentIndex + 1) % modes.length];
         setArrangeMode(nextMode);
 
-        const allTiles = rackSlots.filter(t => t !== null) as TileData[];
-        if (allTiles.length === 0) return;
-
-        // Separate tiles
-        const okeyTiles = allTiles.filter(t => gameState?.okeyTile && t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value);
+        // Separate tiles for utilities
+        const okeyTiles = allTiles.filter(t => t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value);
         const fakeJokers = allTiles.filter(t => t.color === 'fake');
         const normalTiles = allTiles.filter(t => {
-            const isOkey = gameState?.okeyTile && t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value;
+            const isOkey = t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value;
             return !isOkey && t.color !== 'fake';
         });
 
-        let newSlots: (TileData | null)[] = Array(30).fill(null);
+        let newSlots: (TileData | null)[] = [];
 
         switch (nextMode) {
             case 'groups':
@@ -681,367 +539,14 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
                 break;
         }
 
-        setRackSlots(newSlots);
+        // Pad to 30 slots
+        const paddedSlots = [...newSlots];
+        while (paddedSlots.length < 30) paddedSlots.push(null);
+        if (paddedSlots.length > 30) paddedSlots.length = 30;
+
+        setRackSlots(paddedSlots);
+        setTimeout(() => setIsArranging(false), 500);
     };
-
-    // Mode 1: Arrange by Groups (Runs + Sets)
-    const arrangeByGroups = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
-        let remainingTiles = [...normalTiles];
-        const groups: TileData[][] = [];
-        let newSlots: (TileData | null)[] = Array(30).fill(null);
-
-        // Find Runs (Sequential, same color)
-        const colors: ('red' | 'black' | 'blue' | 'yellow')[] = ['red', 'black', 'blue', 'yellow'];
-        colors.forEach(color => {
-            let colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
-
-            // Optimized run finding
-            if (colorTiles.length < 3) return;
-
-            let currentRun: TileData[] = [];
-
-            for (let i = 0; i < colorTiles.length; i++) {
-                const tile = colorTiles[i];
-                if (currentRun.length === 0) {
-                    currentRun.push(tile);
-                } else {
-                    const last = currentRun[currentRun.length - 1];
-                    if (tile.value === last.value + 1) {
-                        currentRun.push(tile);
-                    } else if (tile.value === last.value) {
-                        // Duplicate value, ignore for this run
-                    } else {
-                        // Gap found
-                        if (currentRun.length >= 3) {
-                            groups.push([...currentRun]);
-                            // Remove from remaining
-                            const ids = new Set(currentRun.map(t => t.id));
-                            remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
-                            // Update colorTiles for next iteration
-                            colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
-                            // Restart loop to be safe or just continue? 
-                            // Restarting loop is safer to re-evaluate remaining tiles
-                            i = -1;
-                            currentRun = [];
-                        } else {
-                            currentRun = [tile];
-                        }
-                    }
-                }
-            }
-            // Check final run
-            if (currentRun.length >= 3) {
-                groups.push([...currentRun]);
-                const ids = new Set(currentRun.map(t => t.id));
-                remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
-            }
-
-            // 13-1 Wrap Check (Special Case) - simplifying for MVP to avoid complexity bugs
-        });
-
-        // Find Sets (Same number, different colors)
-        const values = Array.from(new Set(remainingTiles.map(t => t.value))).sort((a, b) => a - b);
-        values.forEach(val => {
-            // Re-filter to ensure we only look at what's actually remaining
-            const valTiles = remainingTiles.filter(t => t.value === val);
-            const uniqueColorTiles: TileData[] = [];
-            const seenColors = new Set();
-
-            valTiles.forEach(t => {
-                if (!seenColors.has(t.color)) {
-                    seenColors.add(t.color);
-                    uniqueColorTiles.push(t);
-                }
-            });
-
-            if (uniqueColorTiles.length >= 3) {
-                // Prioritize sets of 4, then 3
-                groups.push(uniqueColorTiles);
-                const usedIds = new Set(uniqueColorTiles.map(t => t.id));
-                remainingTiles = remainingTiles.filter(t => !usedIds.has(t.id));
-            }
-        });
-
-        // --- PLACEMENT logic with SAFETY ---
-        let cursor = 0;
-
-        // 1. Place Groups
-        groups.forEach(group => {
-            if (cursor + group.length <= 30) {
-                group.forEach((t, i) => newSlots[cursor + i] = t);
-                cursor += group.length;
-                if (cursor < 30) cursor++; // Spacer
-            } else {
-                // If no space with spacer, try without spacer logic later or just push to leftovers
-                // For now, treat as leftovers if they don't fit
-                remainingTiles.push(...group);
-            }
-        });
-
-        // 2. Place Jokers (Okey + Fake)
-        const allJokers = [...okeyTiles, ...fakeJokers];
-        allJokers.forEach(joker => {
-            if (cursor < 30) {
-                newSlots[cursor] = joker;
-                cursor++;
-            } else {
-                // Force fit search
-                const empty = newSlots.indexOf(null);
-                if (empty !== -1) newSlots[empty] = joker;
-            }
-        });
-
-        // 3. Place Remaining Normal Tiles
-        remainingTiles.sort((a, b) => a.color.localeCompare(b.color) || a.value - b.value).forEach(t => {
-            // Try cursor first
-            if (cursor < 30 && newSlots[cursor] === null) {
-                newSlots[cursor] = t;
-                cursor++;
-            } else {
-                // Find ANY empty slot
-                const emptyIdx = newSlots.indexOf(null);
-                if (emptyIdx !== -1) {
-                    newSlots[emptyIdx] = t;
-                } else {
-                    console.error("CRITICAL: NO SPACE FOR TILE!", t);
-                    // This technically shouldn't happen if total tiles <= 30.
-                }
-            }
-        });
-
-        // FINAL SAFETY CHECK: Ensure input count matches output count
-        const inputCount = normalTiles.length + okeyTiles.length + fakeJokers.length;
-        const outputCount = newSlots.filter(t => t !== null).length;
-
-        if (inputCount !== outputCount) {
-            console.log("Auto-arrange mismatch! Fallback to simple fill.");
-            // Fallback: Just dump everything sequentially
-            const all = [...normalTiles, ...okeyTiles, ...fakeJokers];
-            const fallbackSlots = Array(30).fill(null);
-            all.forEach((t, i) => { if (i < 30) fallbackSlots[i] = t; });
-            return fallbackSlots;
-        }
-
-        return newSlots;
-    };
-
-    // Mode 2: Arrange by Color
-    const arrangeByColor = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
-        const newSlots: (TileData | null)[] = Array(30).fill(null);
-        let remainingTiles = [...normalTiles];
-        const colors: ('red' | 'black' | 'blue' | 'yellow')[] = ['red', 'black', 'blue', 'yellow'];
-
-        let cursor = 0;
-        colors.forEach(color => {
-            const colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
-
-            if (colorTiles.length > 0) {
-                if (cursor + colorTiles.length <= 30) {
-                    colorTiles.forEach(tile => {
-                        newSlots[cursor] = tile;
-                        cursor++;
-                    });
-                    if (cursor < 30) cursor++; // Gap
-                } else {
-                    // No space for full group, leave for leftovers
-                }
-                // Remove from remaining
-                const ids = new Set(colorTiles.map(t => t.id));
-                remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
-            }
-        });
-
-        // Place Jokers
-        [...okeyTiles, ...fakeJokers].forEach(joker => {
-            if (cursor < 30) {
-                newSlots[cursor] = joker;
-                cursor++;
-            } else {
-                const empty = newSlots.indexOf(null);
-                if (empty !== -1) newSlots[empty] = joker;
-            }
-        });
-
-        // Fill leftovers (including those that didn't fit in groups)
-        remainingTiles.forEach(t => {
-            let placed = false;
-            // Try cursor first
-            if (cursor < 30 && newSlots[cursor] === null) {
-                newSlots[cursor] = t;
-                cursor++;
-                placed = true;
-            }
-
-            if (!placed) {
-                const emptyIdx = newSlots.indexOf(null);
-                if (emptyIdx !== -1) newSlots[emptyIdx] = t;
-            }
-        });
-
-        return newSlots;
-    };
-
-    // Mode 3: Arrange by Value
-    const arrangeByValue = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
-        const newSlots: (TileData | null)[] = Array(30).fill(null);
-        let remainingTiles = [...normalTiles];
-        const values = Array.from(new Set(normalTiles.map(t => t.value))).sort((a, b) => a - b);
-
-        let cursor = 0;
-        values.forEach(val => {
-            const valueTiles = remainingTiles.filter(t => t.value === val).sort((a, b) => a.color.localeCompare(b.color));
-
-            if (valueTiles.length > 0) {
-                if (cursor + valueTiles.length <= 30) {
-                    valueTiles.forEach(tile => {
-                        newSlots[cursor] = tile;
-                        cursor++;
-                    });
-                    if (cursor < 30) cursor++; // Gap
-                }
-                const ids = new Set(valueTiles.map(t => t.id));
-                remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
-            }
-        });
-
-        // Place Jokers
-        [...okeyTiles, ...fakeJokers].forEach(joker => {
-            if (cursor < 30) {
-                newSlots[cursor] = joker;
-                cursor++;
-            } else {
-                const empty = newSlots.indexOf(null);
-                if (empty !== -1) newSlots[empty] = joker;
-            }
-        });
-
-        // Fill leftovers
-        remainingTiles.forEach(t => {
-            if (cursor < 30 && newSlots[cursor] === null) {
-                newSlots[cursor] = t;
-                cursor++;
-            } else {
-                const emptyIdx = newSlots.indexOf(null);
-                if (emptyIdx !== -1) newSlots[emptyIdx] = t;
-            }
-        });
-
-        return newSlots;
-    };
-
-    // Mode 4: Arrange by Potential (Near-complete groups)
-    const arrangeByPotential = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
-        const newSlots: (TileData | null)[] = Array(30).fill(null);
-        let remainingTiles = [...normalTiles];
-        let cursor = 0;
-
-        // Create copies to avoid mutation
-        const availableOkeys = [...okeyTiles];
-        const availableFakes = [...fakeJokers]; // Treat fakes as jokers for placement
-
-        // Find pairs (same value, 2 different colors)
-        const pairs: TileData[][] = [];
-        const values = Array.from(new Set(remainingTiles.map(t => t.value)));
-
-        // Simple pair finding logic
-        const valueGroups: Record<number, TileData[]> = {};
-        remainingTiles.forEach(t => {
-            if (!valueGroups[t.value]) valueGroups[t.value] = [];
-            valueGroups[t.value].push(t);
-        });
-
-        Object.values(valueGroups).forEach(group => {
-            if (group.length === 2 && group[0].color !== group[1].color) {
-                pairs.push(group);
-                // Mark as used
-                const ids = new Set(group.map(t => t.id));
-                remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
-            }
-        });
-
-        // Find near-runs (2 sequential tiles of same color) from what's left
-        const nearRuns: TileData[][] = [];
-        const colors: ('red' | 'black' | 'blue' | 'yellow')[] = ['red', 'black', 'blue', 'yellow'];
-
-        colors.forEach(color => {
-            const colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
-            // Sliding window of 2
-            let i = 0;
-            while (i < colorTiles.length - 1) {
-                if (colorTiles[i + 1].value === colorTiles[i].value + 1) {
-                    const run = [colorTiles[i], colorTiles[i + 1]];
-                    nearRuns.push(run);
-
-                    // Remove
-                    const ids = new Set(run.map(t => t.id));
-                    remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
-
-                    i += 2; // Skip these two
-                } else {
-                    i++;
-                }
-            }
-        });
-
-        // Place pairs
-        pairs.forEach(pair => {
-            if (cursor + pair.length <= 30) {
-                pair.forEach((t, i) => newSlots[cursor + i] = t);
-                // Place Joker next to pair if available
-                if (availableOkeys.length > 0 && cursor + pair.length < 30) {
-                    newSlots[cursor + pair.length] = availableOkeys.shift()!;
-                    cursor += pair.length + 2;
-                } else {
-                    cursor += pair.length + 1;
-                }
-            } else {
-                remainingTiles.push(...pair); // Fallback
-            }
-        });
-
-        // Place near-runs
-        nearRuns.forEach(run => {
-            if (cursor + run.length <= 30) {
-                run.forEach((t, i) => newSlots[cursor + i] = t);
-                // Place Joker next to run if available
-                if (availableOkeys.length > 0 && cursor + run.length < 30) {
-                    newSlots[cursor + run.length] = availableOkeys.shift()!;
-                    cursor += run.length + 2;
-                } else {
-                    cursor += run.length + 1;
-                }
-            } else {
-                remainingTiles.push(...run);
-            }
-        });
-
-        // Place remaining Jokers (both unused Okeys and all Fakes)
-        [...availableOkeys, ...availableFakes].forEach(joker => {
-            if (cursor < 30) {
-                newSlots[cursor] = joker;
-                cursor++;
-            } else {
-                const empty = newSlots.indexOf(null);
-                if (empty !== -1) newSlots[empty] = joker;
-            }
-        });
-
-        // Fill remaining tiles
-        remainingTiles.sort((a, b) => a.color.localeCompare(b.color) || a.value - b.value).forEach(t => {
-            if (cursor < 30 && newSlots[cursor] === null) {
-                newSlots[cursor] = t;
-                cursor++;
-            } else {
-                const emptyIdx = newSlots.indexOf(null);
-                if (emptyIdx !== -1) newSlots[emptyIdx] = t;
-            }
-        });
-
-        return newSlots;
-    };
-
-
-    // Helper function to translate color names
     const getColorName = (color: string) => {
         const colorMap: Record<string, { tr: string, en: string }> = {
             'red': { tr: 'Kırmızı', en: 'Red' },
@@ -1050,8 +555,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
             'yellow': { tr: 'Sarı', en: 'Yellow' },
             'fake': { tr: 'Sahte Okey', en: 'Fake Joker' }
         };
-        const lang = t('lang_code') === 'tr' ? 'tr' : 'en';
-        return colorMap[color]?.[lang] || color;
+        const langCode = t('lang_code') === 'tr' ? 'tr' : 'en';
+        return colorMap[color]?.[langCode] || color;
     };
 
     if (!gameState) return <div className="h-screen bg-[#1e3a29] flex items-center justify-center text-white">{t("connecting")}</div>;
@@ -1294,8 +799,21 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
             </AnimatePresence>
             <DrawAnimationOverlay />
             <DiscardAnimationOverlay />
-            <WinnerOverlay />
-            <Leaderboard />
+            {gameState.status === 'FINISHED' && (
+                <WinnerOverlay
+                    gameState={gameState}
+                    currentUser={currentUser}
+                    roomData={roomData}
+                    onRestartVote={handleRestartVote}
+                    onLeave={handleLeave}
+                />
+            )}
+            <Leaderboard
+                isOpen={isLeaderboardOpen}
+                onClose={() => setIsLeaderboardOpen(false)}
+                players={roomData?.players || []}
+                winScores={roomData?.winScores || {}}
+            />
             {/* Chat Component */}
             <Chat socket={socket} />
 
@@ -1491,65 +1009,71 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
 
             {/* --- MY RACK (Main Interaction) --- */}
             <div className="absolute bottom-0 left-0 w-full h-[250px] flex justify-center items-end pb-0 z-30 perspective-1000">
-                <div className={`
-                    relative bg-[#3e2723] w-full max-w-[95%] md:max-w-[1100px] h-[160px] rounded-t-lg shadow-[0_-20px_60px_rgba(0,0,0,0.8)] border-t-[8px] border-[#5d4037] flex items-center justify-center pb-4 transform rotateX(5deg) origin-bottom transition-all duration-300 hover:rotateX(0deg)
-                    ${isMyTurn ? 'ring-4 ring-yellow-400 shadow-[0_-20px_80px_rgba(255,215,0,0.4)]' : ''}
-                    ${isArranging ? 'animate-[rackPulse_0.5s_ease-in-out]' : ''}
-                `}>
-                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-30 mix-blend-overlay pointer-events-none"></div>
+                {!isSpectator ? (
+                    <div className={`
+                        relative bg-[#3e2723] w-full max-w-[95%] md:max-w-[1100px] h-[160px] rounded-t-lg shadow-[0_-20px_60px_rgba(0,0,0,0.8)] border-t-[8px] border-[#5d4037] flex items-center justify-center pb-4 transform rotateX(5deg) origin-bottom transition-all duration-300 hover:rotateX(0deg)
+                        ${isMyTurn ? 'ring-4 ring-yellow-400 shadow-[0_-20px_80px_rgba(255,215,0,0.4)]' : ''}
+                        ${isArranging ? 'animate-[rackPulse_0.5s_ease-in-out]' : ''}
+                    `}>
+                        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-30 mix-blend-overlay pointer-events-none"></div>
 
-                    {/* Auto-Arrange Button */}
-                    <button
-                        onClick={handleAutoArrange}
-                        title="Otomatik Diz (Per)"
-                        className={`absolute -top-14 right-4 ${is101Mode ? 'bg-red-600/80 hover:bg-red-500 shadow-[0_0_20px_rgba(220,38,38,0.4)]' : 'bg-yellow-500/80 hover:bg-yellow-400 shadow-[0_0_20px_rgba(255,215,0,0.4)]'} text-white w-12 h-12 rounded-full flex items-center justify-center text-2xl backdrop-blur border border-white/20 transition-all hover:scale-110 active:scale-90 z-[60]`}
-                    >
-                        💡
-                    </button>
+                        {/* Auto-Arrange Button */}
+                        <button
+                            onClick={handleAutoArrange}
+                            title="Otomatik Diz (Per)"
+                            className={`absolute -top-14 right-4 ${is101Mode ? 'bg-red-600/80 hover:bg-red-500 shadow-[0_0_20px_rgba(220,38,38,0.4)]' : 'bg-yellow-500/80 hover:bg-yellow-400 shadow-[0_0_20px_rgba(255,215,0,0.4)]'} text-white w-12 h-12 rounded-full flex items-center justify-center text-2xl backdrop-blur border border-white/20 transition-all hover:scale-110 active:scale-90 z-[60]`}
+                        >
+                            💡
+                        </button>
 
+                        <DndContext
+                            sensors={sensors}
+                            collisionDetection={closestCenter}
+                            onDragStart={handleDragStart}
+                            onDragEnd={handleDragEnd}
+                        >
+                            {isMyTurn && (
+                                <div
+                                    id="discard-zone-container"
+                                    className="absolute -top-[500px] right-[5%] w-64 h-80 border-4 border-dashed border-red-500/30 rounded-3xl bg-red-500/5 flex flex-col items-center justify-center z-50 transition-all hover:bg-red-500/20 hover:scale-105 hover:border-red-500 group animate-pulse"
+                                >
+                                    <div className="text-red-300 font-black text-6xl mb-4 group-hover:scale-125 transition-transform duration-300">🗑️</div>
+                                    <div className="text-red-200 font-black text-center text-xl tracking-widest">TAŞI AT</div>
+                                    <DiscardDroppable />
+                                </div>
+                            )}
 
+                            <div className="grid grid-rows-2 grid-cols-15 gap-x-3 gap-y-2 px-6 relative">
+                                {/* Finish Zone on the Right */}
+                                <FinishZone isMyTurn={isMyTurn} gameMode={gameMode} />
 
-                    <DndContext
-                        sensors={sensors}
-                        collisionDetection={closestCenter}
-                        onDragStart={handleDragStart}
-                        onDragEnd={handleDragEnd}
-                    >
-                        {isMyTurn && (
-                            <div
-                                id="discard-zone-container"
-                                className="absolute -top-[500px] right-[5%] w-64 h-80 border-4 border-dashed border-red-500/30 rounded-3xl bg-red-500/5 flex flex-col items-center justify-center z-50 transition-all hover:bg-red-500/20 hover:scale-105 hover:border-red-500 group animate-pulse"
-                            >
-                                <div className="text-red-300 font-black text-6xl mb-4 group-hover:scale-125 transition-transform duration-300">🗑️</div>
-                                <div className="text-red-200 font-black text-center text-xl tracking-widest">TAŞI AT</div>
-                                <DiscardDroppable />
+                                {rackSlots.map((tile, i) => (
+                                    <DroppableSlot key={i} id={`slot-${i}`}>
+                                        {tile ? (
+                                            <div className="animate-[tilePop_0.3s_ease-out_forwards]">
+                                                <DraggableTile
+                                                    tile={tile}
+                                                    isMyTurn={isMyTurn}
+                                                    onDiscard={handleDiscard}
+                                                    isOkey={gameState.okeyTile && tile.color === gameState.okeyTile.color && tile.value === gameState.okeyTile.value}
+                                                    onFlip={handleFlipTile}
+                                                    isFlipped={flipAnimationIds.has(tile.id)}
+                                                    hasBeenFlipped={flippedTileIds.has(tile.id)}
+                                                />
+                                            </div>
+                                        ) : null}
+                                    </DroppableSlot>
+                                ))}
                             </div>
-                        )}
-
-                        <div className="grid grid-rows-2 grid-cols-15 gap-x-3 gap-y-2 px-6 relative">
-                            {/* Finish Zone on the Right */}
-                            <FinishZone />
-
-                            {rackSlots.map((tile, i) => (
-                                <DroppableSlot key={i} id={`slot-${i}`}>
-                                    {tile ? (
-                                        <div className="animate-[tilePop_0.3s_ease-out_forwards]">
-                                            <DraggableTile
-                                                tile={tile}
-                                                isMyTurn={isMyTurn}
-                                                onDiscard={handleDiscard}
-                                                isOkey={gameState.okeyTile && tile.color === gameState.okeyTile.color && tile.value === gameState.okeyTile.value}
-                                                onFlip={handleFlipTile}
-                                                isFlipped={flipAnimationIds.has(tile.id)}
-                                                hasBeenFlipped={flippedTileIds.has(tile.id)}
-                                            />
-                                        </div>
-                                    ) : null}
-                                </DroppableSlot>
-                            ))}
-                        </div>
-                    </DndContext>
-                </div>
+                        </DndContext>
+                    </div>
+                ) : (
+                    <div className="relative bg-[#1a1a2e]/60 w-full max-w-[950px] h-[160px] rounded-t-3xl border-t-2 border-x-2 border-blue-500/30 flex flex-col items-center justify-center backdrop-blur-xl shadow-[0_-20px_50px_rgba(59,130,246,0.2)] animate-pulse">
+                        <div className="text-4xl mb-2">👁️</div>
+                        <div className="text-blue-400 font-black text-2xl tracking-widest uppercase">{t("spectating") || "İZLİYORSUNUZ"}</div>
+                        <div className="text-blue-400/40 text-[10px] font-bold mt-1">Sadece izleme modu • Müdahele edilemez</div>
+                    </div>
+                )}
             </div>
         </div>
     );

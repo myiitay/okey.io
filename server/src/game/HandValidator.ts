@@ -56,7 +56,10 @@ export class HandValidator {
         // Strategy: Recursively try to extract valid sets.
         // Optimization: Sort by color/value.
 
-        return this.canFormSets(processedHand) || this.canFormPairs(processedHand);
+        const canPair = this.canFormPairs(processedHand);
+        const canSet = this.canFormSets(processedHand);
+
+        return canSet || canPair;
     }
 
     private static canFormPairs(hand: any[]): boolean {

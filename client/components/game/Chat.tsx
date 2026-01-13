@@ -113,15 +113,42 @@ export const Chat: React.FC<{ socket: Socket }> = ({ socket }) => {
                 </div>
 
                 {/* Input - Compact */}
-                <form onSubmit={handleSend} className="p-2 bg-white/5 border-t border-white/5 flex gap-2">
-                    <input
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder="Yaz..."
-                        className="flex-1 bg-black/20 border border-white/5 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-white/20 transition-colors placeholder:text-white/10"
-                    />
-                </form>
+                <div className="p-2 bg-white/5 border-t border-white/5 space-y-2">
+                    {/* Presets Bar */}
+                    <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-hide">
+                        {["Bol Şans", "Tebrikler!", "Eyvallah", "Hadi!", "☕ Kahve Ismarla!"].map(txt => (
+                            <button
+                                key={txt}
+                                onClick={() => socket.emit('sendMessage', txt)}
+                                className="whitespace-nowrap bg-white/5 hover:bg-white/10 text-[9px] text-white/50 px-2 py-0.5 rounded transition-colors border border-white/5"
+                            >
+                                {txt}
+                            </button>
+                        ))}
+                    </div>
+                    {/* Emojis Bar */}
+                    <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+                        {["😂", "😍", "😡", "😭", "👍", "👎", "🔥", "💩"].map(emoji => (
+                            <button
+                                key={emoji}
+                                onClick={() => socket.emit('sendMessage', emoji)}
+                                className="text-sm hover:scale-125 transition-transform"
+                            >
+                                {emoji}
+                            </button>
+                        ))}
+                    </div>
+
+                    <form onSubmit={handleSend} className="flex gap-2">
+                        <input
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder="Yaz..."
+                            className="flex-1 bg-black/20 border border-white/5 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-white/20 transition-colors placeholder:text-white/10"
+                        />
+                    </form>
+                </div>
             </div>
         </div>
     );

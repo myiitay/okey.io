@@ -36,6 +36,8 @@ export class OkeyGame {
     constructor(playerIds: string[], onStateChange: (state: GameState) => void) {
         this.playerIds = playerIds;
         this.onStateChange = onStateChange;
+        this.status = 'PLAYING'; // Explicitly ensure start state
+        console.log(`[OkeyGame] Created for players: ${playerIds.join(', ')}. Initial status: ${this.status}`);
         this.initializeGame();
     }
 
@@ -123,7 +125,7 @@ export class OkeyGame {
         return drawn;
     }
 
-    public handleAction(playerId: string, action: { type: string, payload?: any }) {
+    public async handleAction(playerId: string, action: { type: string, payload?: any }) {
         const playerIndex = this.players.findIndex(p => p.id === playerId);
         if (playerIndex === -1) return;
 
@@ -150,34 +152,36 @@ export class OkeyGame {
             case 'FINISH_GAME':
                 if (player.hand.length !== 15) throw new Error("Invalid state");
                 // Validate Hand
-                import('./HandValidator').then(({ HandValidator }) => {
-                    // Check winning condition
-                    // 1. We need to discard one tile to "finish"
-                    // The user usually selects a tile to "Finish" with?
-                    // Or they discard, then say finish?
-                    // Standard: Drag tile to "Finish" pile/area. 
-                    // Here payload should be the finish tile.
+                const { HandValidator } = await import('./HandValidator');
 
-                    const finishTileId = action.payload?.tileId;
-                    if (!finishTileId) throw new Error("Select a tile to finish with");
+                // Check winning condition
+                // 1. We need to discard one tile to "finish"
+                // The user usually selects a tile to "Finish" with?
+                // Or they discard, then say finish?
+                // Standard: Drag tile to "Finish" pile/area. 
+                // Here payload should be the finish tile.
 
-                    // Separate hand into Hand (14) and Finish Tile (1)
-                    const finishTileIdx = player.hand.findIndex(t => t.id === finishTileId);
-                    if (finishTileIdx === -1) throw new Error("Tile not found");
+                const finishTileId = action.payload?.tileId;
+                if (!finishTileId) throw new Error("Select a tile to finish with");
 
-                    const remainingHand = [...player.hand];
-                    remainingHand.splice(finishTileIdx, 1);
+                // Separate hand into Hand (14) and Finish Tile (1)
+                const finishTileIdx = player.hand.findIndex(t => t.id === finishTileId);
+                if (finishTileIdx === -1) throw new Error("Tile not found");
 
-                    const isValid = HandValidator.validateHand(remainingHand, this.okeyTile);
+                const remainingHand = [...player.hand];
+                remainingHand.splice(finishTileIdx, 1);
 
-                    if (isValid) {
-                        this.status = 'FINISHED';
-                        player.isTurn = false;
-                        this.onStateChange({ ...this.getGameState(), winnerId: playerId });
-                    } else {
-                        throw new Error("Hand is not a winning hand!");
-                    }
-                });
+                const isValid = HandValidator.validateHand(remainingHand, this.okeyTile);
+
+                if (isValid) {
+                    console.log(`[OkeyGame] FINISH_GAME SUCCESS: ${playerId} won!`);
+                    this.status = 'FINISHED';
+                    player.isTurn = false;
+                    this.onStateChange({ ...this.getGameState(), winnerId: playerId });
+                } else {
+                    console.warn(`[OkeyGame] FINISH_GAME ATTEMPT FAILED: ${playerId} hand invalid.`);
+                    throw new Error("Hand is not a winning hand!");
+                }
                 break;
         }
     }
@@ -225,6 +229,18 @@ export class OkeyGame {
         this.players[this.turnIndex].isTurn = true;
 
         this.onStateChange(this.getGameState());
+    }
+
+    public updatePlayerId(oldId: string, newId: string) {
+        const player = this.players.find(p => p.id === oldId);
+        if (player) {
+            player.id = newId;
+        }
+        // Also update internal playerIds array
+        const idx = this.playerIds.indexOf(oldId);
+        if (idx !== -1) {
+            this.playerIds[idx] = newId;
+        }
     }
 
     public getFullState(): GameState {
