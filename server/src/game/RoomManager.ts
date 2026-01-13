@@ -9,6 +9,7 @@ interface Room {
     bannedPlayers: Set<string>;
     winScores: Map<string, number>; // Name -> Score
     restartVotes: Set<string>; // Socket ID
+    gameMode?: '101' | 'standard'; // Game mode
 }
 
 interface Player {
@@ -43,15 +44,17 @@ export class RoomManager {
             // Basic join lobby if needed
         });
 
-        socket.on('createRoom', (payload: { name: string, avatar?: string } | string) => {
+        socket.on('createRoom', (payload: { name: string, avatar?: string, gameMode?: '101' | 'standard' } | string) => {
             let name = "";
             let avatar = "👤"; // Default
+            let gameMode: '101' | 'standard' = 'standard'; // Default
 
             if (typeof payload === 'string') {
                 name = payload;
             } else if (payload && typeof payload === 'object') {
                 name = payload.name;
                 if (payload.avatar) avatar = payload.avatar;
+                if (payload.gameMode) gameMode = payload.gameMode;
             }
 
             if (!name) {
@@ -77,7 +80,8 @@ export class RoomManager {
                 maxPlayers: 4,
                 bannedPlayers: new Set(),
                 winScores: new Map(),
-                restartVotes: new Set()
+                restartVotes: new Set(),
+                gameMode: gameMode
             };
 
             this.rooms.set(code, room);
@@ -267,7 +271,7 @@ export class RoomManager {
                                 this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
                             }
                         }
-                        this.io.to(room.id).emit('gameState', gameState);
+                        this.broadcastGameState(room.id, gameState);
                     });
 
                     const initialState = room.game.start();
@@ -276,7 +280,7 @@ export class RoomManager {
                     room.restartVotes.clear(); // Reset votes for next turn
 
                     // Emit game started (Joker is already selected in start(), but client will show animation)
-                    this.io.to(room.id).emit('gameStarted', initialState);
+                    this.broadcastGameState(room.id, initialState, 'gameStarted');
                     this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
 
                     // After 3 more seconds (for dealing animation), emit Joker reveal
@@ -328,8 +332,27 @@ export class RoomManager {
 
             const room = this.rooms.get(player.roomId);
             if (room && room.game) {
-                socket.emit('gameState', room.game.getFullState());
+                const fullState = room.game.getFullState();
+                const sanitized = this.sanitizeGameState(fullState, player.id);
+                socket.emit('gameState', sanitized);
             }
+        });
+
+        // Chat Message
+        socket.on('sendMessage', (msg: string) => {
+            const player = this.players.get(socket.id);
+            if (!player || !player.roomId) return;
+            const room = this.rooms.get(player.roomId);
+            if (!room) return;
+
+            const chatPayload = {
+                sender: player.name,
+                avatar: player.avatar || "👤", // Fallback
+                text: msg,
+                time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                isSystem: false
+            };
+            this.io.to(room.id).emit('chatMessage', chatPayload);
         });
 
         // Pass-through game actions
@@ -359,13 +382,24 @@ export class RoomManager {
                     } else {
                         // If game is in progress, handle player leave (end game or bot?)
                         // For MVP: end game or just notify
+
+                        // System Message: Player Left
+                        const leaveTime = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+                        const leftMsg = {
+                            sender: 'Sistem',
+                            text: `${player.name} oyundan ayrıldı.`,
+                            time: leaveTime,
+                            isSystem: true
+                        };
+                        this.io.to(room.id).emit('chatMessage', leftMsg);
+
                         this.io.to(room.id).emit('playerLeft', player.id);
                         this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
 
                         if (room.game) {
                             // Reset game if player leaves for MVP
                             delete room.game;
-                            this.io.to(room.id).emit('gameReset', 'Player disconnected');
+                            this.io.to(room.id).emit('gameReset', 'Oyuncu ayrıldığı için oyun bitti.');
                         }
                     }
                 }
@@ -387,7 +421,36 @@ export class RoomManager {
             })),
             winScores: room.winScores ? Object.fromEntries(room.winScores) : {},
             restartCount: room.restartVotes?.size || 0,
-            gameStarted: !!room.game
+            gameStarted: !!room.game,
+            gameMode: room.gameMode || 'standard'
         };
+    }
+
+    private sanitizeGameState(state: GameState, targetPlayerId: string): GameState {
+        // Deep clone to avoid mutating the original server state
+        const deepCopy = JSON.parse(JSON.stringify(state));
+
+        // Mask other players' hands
+        deepCopy.players = deepCopy.players.map((p: any) => {
+            if (p.id !== targetPlayerId) {
+                return {
+                    ...p,
+                    hand: [] // HIDE OPPONENT'S TILES
+                };
+            }
+            return p;
+        });
+
+        return deepCopy;
+    }
+
+    private broadcastGameState(roomId: string, state: GameState, eventName: string = 'gameState') {
+        const room = this.rooms.get(roomId);
+        if (!room) return;
+
+        room.players.forEach(player => {
+            const sanitized = this.sanitizeGameState(state, player.id);
+            this.io.to(player.id).emit(eventName, sanitized);
+        });
     }
 }

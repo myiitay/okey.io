@@ -5,6 +5,7 @@ import { getSocket } from "@/utils/socket";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Tile } from "@/components/Tile";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { soundManager } from "@/utils/soundManager";
 
 export default function Home() {
     const [nickname, setNickname] = useState("");
@@ -98,25 +99,27 @@ export default function Home() {
     }, [router, socket]);
 
     const handleCreate = () => {
-        console.log("Attempting to create room with nickname:", nickname);
         if (!nickname) {
+            soundManager.play('error');
             setError(t("enter_nickname"));
             return;
         }
-        // Send nickname and avatar
+        soundManager.play('click');
         socket.emit("createRoom", { name: nickname, avatar: avatars[avatarId] });
-        console.log("createRoom event emitted");
     };
 
     const handleJoin = () => {
         if (!nickname) {
+            soundManager.play('error');
             setError(t("enter_nickname"));
             return;
         }
         if (!roomCode) {
+            soundManager.play('error');
             setError(t("enter_code"));
             return;
         }
+        soundManager.play('click');
         socket.emit("joinRoom", { code: roomCode, name: nickname, avatar: avatars[avatarId] });
     };
 
@@ -141,20 +144,12 @@ export default function Home() {
         setTileStyles(styles);
     }, []);
 
-    // CSS Keyframes for smooth floating
-    const floatAnimation = `
-        @keyframes float {
-            0% { transform: translate(0, 0) rotate(0deg); }
-            33% { transform: translate(30px, -50px) rotate(10deg); }
-            66% { transform: translate(-20px, 20px) rotate(-5deg); }
-            100% { transform: translate(0, 0) rotate(0deg); }
-        }
-    `;
+    // CSS Keyframes for smooth floating defined in globals.css
 
     return (
         // Premium Dynamic Gradient Background
         <div className="min-h-screen overflow-hidden relative flex flex-col items-center justify-center font-sans bg-[#0f0c29]">
-            <style jsx global>{floatAnimation}</style>
+
 
             {/* --- Animated Mesh Gradient --- */}
             <div className="absolute inset-0 bg-gradient-to-br from-[#24243e] via-[#302b63] to-[#0f0c29] animate-gradient-xy"></div>
@@ -166,12 +161,54 @@ export default function Home() {
 
             {/* --- Language Toggle --- */}
             <div className="absolute top-6 right-6 z-50 flex gap-2">
-                <button onClick={() => setLanguage('tr')} className="w-12 h-12 rounded-2xl border-white/20 border-2 bg-white/10 hover:bg-white/30 backdrop-blur-md transition-all hover:scale-110 flex items-center justify-center p-1 shadow-lg">
+                <button onMouseEnter={() => soundManager.play('hover')} onClick={() => { soundManager.play('click'); setLanguage('tr'); }} className="w-12 h-12 rounded-2xl border-white/20 border-2 bg-white/10 hover:bg-white/30 backdrop-blur-md transition-all hover:scale-110 flex items-center justify-center p-1 shadow-lg">
                     <img src="https://flagcdn.com/w80/tr.png" alt="TR" className="w-full h-full object-contain rounded" />
                 </button>
-                <button onClick={() => setLanguage('en')} className="w-12 h-12 rounded-2xl border-white/20 border-2 bg-white/10 hover:bg-white/30 backdrop-blur-md transition-all hover:scale-110 flex items-center justify-center p-1 shadow-lg">
+                <button onMouseEnter={() => soundManager.play('hover')} onClick={() => { soundManager.play('click'); setLanguage('en'); }} className="w-12 h-12 rounded-2xl border-white/20 border-2 bg-white/10 hover:bg-white/30 backdrop-blur-md transition-all hover:scale-110 flex items-center justify-center p-1 shadow-lg">
                     <img src="https://flagcdn.com/w80/us.png" alt="EN" className="w-full h-full object-contain rounded" />
                 </button>
+            </div>
+
+            {/* --- 101 Mode Entry (Top Left) --- */}
+            <div className="absolute top-8 left-8 z-50 group">
+                <div className="relative">
+                    {/* Static Text with Faster Color Pulse & SVG Arrow */}
+                    <div className="absolute -right-48 top-1/2 -translate-y-1/2 flex items-center gap-3 animate-color-pulse font-bold font-handwriting">
+                        {/* Custom Red Arrow SVG */}
+                        <svg width="40" height="20" viewBox="0 0 40 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-red-600">
+                            <path d="M2 10H38M2 10L10 2M2 10L10 18" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span className="text-xl whitespace-nowrap">101 Modu</span>
+                    </div>
+
+                    <button
+                        onMouseEnter={() => soundManager.play('hover')}
+                        onClick={() => { soundManager.play('click'); router.push('/101'); }}
+                        className="
+                            relative w-20 h-20 
+                            bg-gradient-to-br from-red-600 to-rose-700 
+                            text-white 
+                            shadow-[0_10px_25px_rgba(220,38,38,0.5)] 
+                            border-b-4 border-r-4 border-red-900 
+                            hover:scale-110 active:scale-95 transition-all duration-300
+                            flex items-center justify-center
+                            overflow-hidden
+                        "
+                        style={{
+                            borderRadius: '30% 70% 70% 30% / 30% 30% 70% 70%' // Asymmetric Blob Shape
+                        }}
+                    >
+                        <span className="text-2xl font-black relative z-10 -rotate-12 group-hover:rotate-0 transition-transform">101</span>
+
+                        {/* Shine Effect */}
+                        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/30 to-transparent translate-y-full group-hover:translate-y-[-100%] transition-transform duration-700"></div>
+                    </button>
+
+                    {/* Floating Badge */}
+                    <div className="absolute -top-2 -right-2 bg-yellow-400 text-black text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm animate-bounce">
+                        YENİ
+                    </div>
+                </div>
             </div>
 
             {/* --- Animated Background Tiles --- */}
@@ -226,7 +263,8 @@ export default function Home() {
                                     {avatars.map((av, i) => (
                                         <button
                                             key={i}
-                                            onClick={() => setAvatarId(i)}
+                                            onMouseEnter={() => soundManager.play('hover')}
+                                            onClick={() => { soundManager.play('click'); setAvatarId(i); }}
                                             className={`w-12 h-12 flex items-center justify-center text-3xl rounded-xl hover:bg-gray-100 transition-colors ${avatarId === i ? 'bg-sky-100 ring-2 ring-sky-300' : ''}`}
                                         >
                                             {av}
@@ -247,13 +285,15 @@ export default function Home() {
                         {/* Step 2: Tabs */}
                         <div className="bg-gray-100 p-2 rounded-3xl flex gap-2">
                             <button
-                                onClick={() => setActiveTab('create')}
+                                onMouseEnter={() => soundManager.play('hover')}
+                                onClick={() => { soundManager.play('click'); setActiveTab('create'); }}
                                 className={`flex-1 py-3 rounded-2xl font-bold text-lg transition-all ${activeTab === 'create' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
                             >
                                 {t("create_room")}
                             </button>
                             <button
-                                onClick={() => setActiveTab('join')}
+                                onMouseEnter={() => soundManager.play('hover')}
+                                onClick={() => { soundManager.play('click'); setActiveTab('join'); }}
                                 className={`flex-1 py-3 rounded-2xl font-bold text-lg transition-all ${activeTab === 'join' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
                             >
                                 {t("join_room")}
@@ -264,6 +304,7 @@ export default function Home() {
                         <div className="mt-8">
                             {activeTab === 'create' ? (
                                 <button
+                                    onMouseEnter={() => soundManager.play('hover')}
                                     onClick={handleCreate}
                                     className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-black text-2xl py-6 rounded-3xl shadow-[0_10px_20px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all flex items-center justify-center gap-3"
                                 >
@@ -280,6 +321,7 @@ export default function Home() {
                                         className="w-full bg-white border-4 border-indigo-100 focus:border-indigo-500 rounded-2xl px-4 py-4 text-center font-mono text-3xl font-black text-indigo-600 outline-none uppercase placeholder-indigo-100"
                                     />
                                     <button
+                                        onMouseEnter={() => soundManager.play('hover')}
                                         onClick={handleJoin}
                                         className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-black text-xl py-4 rounded-3xl shadow-[0_8px_16px_rgba(99,102,241,0.3)] border-b-8 border-indigo-800 active:border-b-0 active:translate-y-2 transition-all"
                                     >
@@ -293,7 +335,7 @@ export default function Home() {
                 </div>
 
                 <div className="mt-8 text-white/60 font-medium opacity-50 text-xs">
-                    © {new Date().getFullYear()} Okey.io • Playing for Fun
+                    © {new Date().getFullYear()} Okey.io
                 </div>
             </div>
         </div>

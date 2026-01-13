@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/utils/socket";
 import { GameBoard } from "@/components/GameBoard";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { soundManager } from "@/utils/soundManager";
 
 interface Player {
     id: string;
@@ -19,6 +20,7 @@ interface RoomData {
     winScores: Record<string, number>;
     restartCount: number;
     gameStarted: boolean;
+    gameMode?: '101' | 'standard';
 }
 
 export default function RoomPage() {
@@ -47,12 +49,19 @@ export default function RoomPage() {
         socket.on("roomCountdown", (count: number) => {
             setCountdown(count);
             setIsStarting(true);
+
+            // Play start sound 3 times with 1s intervals
+            soundManager.play('countdown_start');
+            setTimeout(() => soundManager.play('countdown_start'), 1000);
+            setTimeout(() => soundManager.play('countdown_start'), 2000);
+
             const interval = setInterval(() => {
                 setCountdown(prev => {
                     if (prev === null || prev <= 1) {
                         clearInterval(interval);
                         return null;
                     }
+                    soundManager.play('countdown_tick');
                     return prev - 1;
                 });
             }, 1000);
@@ -147,21 +156,23 @@ export default function RoomPage() {
         );
     }
 
-    if (!roomData) return <div className="h-screen bg-[#0f0c29] text-white flex flex-col gap-4 items-center justify-center font-bold text-2xl">
-        <div className="w-16 h-16 border-4 border-t-yellow-400 border-r-transparent border-b-yellow-400 border-l-transparent rounded-full animate-spin"></div>
+    const is101Mode = roomData?.gameMode === '101';
+
+    if (!roomData) return <div className={`h-screen ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} text-white flex flex-col gap-4 items-center justify-center font-bold text-2xl`}>
+        <div className={`w-16 h-16 border-4 ${is101Mode ? 'border-t-red-500 border-b-red-500' : 'border-t-yellow-400 border-b-yellow-400'} border-r-transparent border-l-transparent rounded-full animate-spin`}></div>
         <div className="animate-pulse tracking-widest">{t("connecting")}</div>
     </div>;
 
     if (roomData.gameStarted) {
-        return <GameBoard roomCode={code as string} currentUser={{ id: socket.id as string, name: "" }} />;
+        return <GameBoard roomCode={code as string} currentUser={{ id: socket.id as string, name: "" }} gameMode={roomData.gameMode} />;
     }
 
     // --- COUNTDOWN OVERLAY ---
     if (countdown !== null) {
         return (
-            <div className="min-h-screen bg-[#0f0c29] flex items-center justify-center relative overflow-hidden font-sans z-50">
+            <div className={`min-h-screen ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} flex items-center justify-center relative overflow-hidden font-sans z-50`}>
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 animate-pulse"></div>
-                <div className="text-[15rem] font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-yellow-600 animate-[ping_1s_ease-in-out_infinite] drop-shadow-[0_0_50px_rgba(250,204,21,0.5)]">
+                <div className={`text-[15rem] font-black text-transparent bg-clip-text ${is101Mode ? 'bg-gradient-to-b from-red-400 to-red-700' : 'bg-gradient-to-b from-yellow-300 to-yellow-600'} animate-[ping_1s_ease-in-out_infinite] ${is101Mode ? 'drop-shadow-[0_0_50px_rgba(220,38,38,0.5)]' : 'drop-shadow-[0_0_50px_rgba(250,204,21,0.5)]'}`}>
                     {countdown}
                 </div>
             </div>
@@ -172,16 +183,24 @@ export default function RoomPage() {
 
     // Waiting Room UI (Premium Glassmorphism)
     return (
-        <div className="min-h-screen bg-[#0f0c29] flex flex-col items-center justify-center relative overflow-hidden font-sans p-4">
+        <div className={`min-h-screen ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} flex flex-col items-center justify-center relative overflow-hidden font-sans p-4`}>
             {/* Background Atmosphere */}
-            <div className="absolute inset-0 bg-gradient-to-br from-purple-900/40 via-[#0f0c29] to-blue-900/40 pointer-events-none"></div>
-            <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[100px] pointer-events-none animate-pulse"></div>
-            <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[100px] pointer-events-none animate-pulse" style={{ animationDelay: "1s" }}></div>
+            <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-red-900/40 via-[#2a0808] to-rose-900/40' : 'bg-gradient-to-br from-purple-900/40 via-[#0f0c29] to-blue-900/40'} pointer-events-none`}></div>
+            <div className={`absolute top-0 right-0 w-[500px] h-[500px] ${is101Mode ? 'bg-red-600/20' : 'bg-purple-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`}></div>
+            <div className={`absolute bottom-0 left-0 w-[500px] h-[500px] ${is101Mode ? 'bg-rose-600/20' : 'bg-blue-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`} style={{ animationDelay: "1s" }}></div>
 
             <div className="relative w-full max-w-4xl grid grid-cols-1 md:grid-cols-[350px_1fr] gap-8">
 
                 {/* LEFT COL: INFO CARD */}
                 <div className="flex flex-col gap-6">
+                    {/* 101 Mode Label */}
+                    {is101Mode && (
+                        <div className="bg-red-600/20 backdrop-blur-xl rounded-3xl p-6 border border-red-500/30 shadow-2xl flex flex-col items-center justify-center animate-pulse">
+                            <div className="text-4xl font-black text-white tracking-[0.2em] drop-shadow-[0_0_15px_rgba(220,38,38,0.5)]">101</div>
+                            <div className="text-[10px] font-bold text-red-400 uppercase tracking-widest mt-1">Okey 101 Modu</div>
+                        </div>
+                    )}
+
                     {/* Room Code Card */}
                     <div className="bg-white/5 backdrop-blur-xl rounded-[2rem] p-8 border border-white/10 shadow-2xl relative overflow-hidden group hover:border-white/20 transition-all duration-500">
                         <div className="absolute -top-10 -right-10 w-32 h-32 bg-yellow-500/20 rounded-full blur-2xl group-hover:bg-yellow-500/30 transition-all"></div>
@@ -196,7 +215,8 @@ export default function RoomPage() {
                                 {code}
                             </div>
                             <button
-                                onClick={handleCopy}
+                                onMouseEnter={() => soundManager.play('hover')}
+                                onClick={() => { soundManager.play('click'); handleCopy(); }}
                                 className={`
                                     flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold transition-all duration-300
                                     ${copied ? 'bg-green-500/20 text-green-400 border border-green-500/50' : 'bg-white/10 text-white border border-white/10 hover:bg-white/20'}
@@ -209,7 +229,8 @@ export default function RoomPage() {
 
                     {/* Exit Button */}
                     <button
-                        onClick={handleLeave}
+                        onMouseEnter={() => soundManager.play('hover')}
+                        onClick={() => { soundManager.play('click'); handleLeave(); }}
                         className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 hover:border-red-500/50 p-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 group"
                     >
                         <span className="group-hover:-translate-x-1 transition-transform">⬅</span> {t("exit")}
@@ -219,6 +240,10 @@ export default function RoomPage() {
 
                 {/* RIGHT COL: PLAYERS & ACTION */}
                 <div className="flex flex-col gap-6">
+                    <div className="bg-black/40 backdrop-blur-md px-4 py-2 rounded-lg text-white/80 font-mono text-sm border border-white/10 shadow-lg">
+                        Code: <span className="text-yellow-400 font-bold">{code}</span>
+                    </div>
+
                     {/* Player Grid */}
                     <div className="bg-black/20 backdrop-blur-md rounded-[2rem] p-6 border border-white/5 min-h-[400px] flex flex-col">
                         <div className="flex items-center justify-between mb-6 px-2">
@@ -260,14 +285,16 @@ export default function RoomPage() {
                                         {isHost && player.id !== socket.id && (
                                             <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <button
-                                                    onClick={() => handleKick(player.id)}
+                                                    onMouseEnter={() => soundManager.play('hover')}
+                                                    onClick={() => { soundManager.play('click'); handleKick(player.id); }}
                                                     className="bg-red-500/20 hover:bg-red-500/80 text-red-200 hover:text-white p-2 rounded-lg transition-colors border border-red-500/30"
                                                     title={t("kick")}
                                                 >
                                                     👢
                                                 </button>
                                                 <button
-                                                    onClick={() => handleBan(player.id)}
+                                                    onMouseEnter={() => soundManager.play('hover')}
+                                                    onClick={() => { soundManager.play('click'); handleBan(player.id); }}
                                                     className="bg-red-900/40 hover:bg-red-900/90 text-red-400 hover:text-white p-2 rounded-lg transition-colors border border-red-900/30 font-bold"
                                                     title={t("ban")}
                                                 >
@@ -293,7 +320,8 @@ export default function RoomPage() {
                     <div className="mt-auto">
                         {isHost ? (
                             <button
-                                onClick={handleStartGame}
+                                onMouseEnter={() => soundManager.play('hover')}
+                                onClick={() => { soundManager.play('click'); handleStartGame(); }}
                                 disabled={roomData.players.length !== 2 && roomData.players.length !== 4 || isStarting}
                                 className={`
                                     w-full relative py-5 rounded-[1.5rem] font-black text-2xl text-white shadow-xl overflow-hidden transition-all duration-300
