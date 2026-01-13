@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { getSocket } from "@/utils/socket";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Tile } from "@/components/Tile";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { soundManager } from "@/utils/soundManager";
 
-export default function Home() {
+function HomeContent() {
     const [nickname, setNickname] = useState("");
     const [avatarId, setAvatarId] = useState(0); // 0-7
     const [isLoaded, setIsLoaded] = useState(false);
@@ -31,7 +31,24 @@ export default function Home() {
         }
     }, [nickname, avatarId, isLoaded]);
 
-    // Handle Auto-Join via URL
+    const [error, setError] = useState("");
+    const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
+    const router = useRouter();
+    const socket = getSocket();
+    const { t, language, setLanguage } = useLanguage();
+
+    // Expanded Human Avatars (Preserved)
+    const avatars = [
+        "👨🏻", "👩🏻", "👱🏻‍♂️", "👱🏻‍♀️", "🧔🏻", "👵🏻", "👴🏻", "👶🏻",
+        "👨🏾", "👩🏾", "👨🏿", "👩🏿", "👨🏽", "👩🏽", "👳🏾‍♂️", "🧕🏾",
+        "🤵🏻", "👰🏻", "🤴🏻", "👸🏻", "👮🏻‍♂️", "🕵🏻‍♂️", "💂🏻‍♂️", "👷🏻‍♂️",
+        "👨🏻‍⚕️", "👩🏻‍⚕️", "👨🏻‍🎓", "👩🏻‍🎓", "👨🏻‍🎤", "👩🏻‍🎤", "👨🏻‍🏫", "👩🏻‍🏫",
+        "👨🏻‍🏭", "👩🏻‍🏭", "👨🏻‍💻", "👩🏻‍💻", "👨🏻‍💼", "👩🏻‍💼", "👨🏻‍🔧", "👩🏻‍🔧",
+        "🧙🏻‍♂️", "🧙🏻‍♀️", "🧛🏻‍♂️", "🧛🏻‍♀️", "🧟‍♂️", "🧟‍♀️", "🧞‍♂️", "🧞‍♀️",
+        "🕴🏻", "🧘🏻‍♂️", "🧘🏻‍♀️", "🏄🏻‍♂️", "🏄🏻‍♀️", "🏊🏻‍♂️", "🏊🏻‍♀️", "⛹🏻‍♂️"
+    ];
+
+    // Handle Auto-Join via URL - Moved after definitions to use avatars/socket
     useEffect(() => {
         const joinCode = searchParams.get('join');
         if (joinCode && isLoaded) {
@@ -52,25 +69,7 @@ export default function Home() {
                 return () => clearTimeout(timer);
             }
         }
-    }, [searchParams, isLoaded, nickname, avatarId]);
-    // Dependency on nickname/avatarId ensures we use the loaded values
-
-    const [error, setError] = useState("");
-    const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
-    const router = useRouter();
-    const socket = getSocket();
-    const { t, language, setLanguage } = useLanguage();
-
-    // Expanded Human Avatars (Preserved)
-    const avatars = [
-        "👨🏻", "👩🏻", "👱🏻‍♂️", "👱🏻‍♀️", "🧔🏻", "👵🏻", "👴🏻", "👶🏻",
-        "👨🏾", "👩🏾", "👨🏿", "👩🏿", "👨🏽", "👩🏽", "👳🏾‍♂️", "🧕🏾",
-        "🤵🏻", "👰🏻", "🤴🏻", "👸🏻", "👮🏻‍♂️", "🕵🏻‍♂️", "💂🏻‍♂️", "👷🏻‍♂️",
-        "👨🏻‍⚕️", "👩🏻‍⚕️", "👨🏻‍🎓", "👩🏻‍🎓", "👨🏻‍🎤", "👩🏻‍🎤", "👨🏻‍🏫", "👩🏻‍🏫",
-        "👨🏻‍🏭", "👩🏻‍🏭", "👨🏻‍💻", "👩🏻‍💻", "👨🏻‍💼", "👩🏻‍💼", "👨🏻‍🔧", "👩🏻‍🔧",
-        "🧙🏻‍♂️", "🧙🏻‍♀️", "🧛🏻‍♂️", "🧛🏻‍♀️", "🧟‍♂️", "🧟‍♀️", "🧞‍♂️", "🧞‍♀️",
-        "🕴🏻", "🧘🏻‍♂️", "🧘🏻‍♀️", "🏄🏻‍♂️", "🏄🏻‍♀️", "🏊🏻‍♂️", "🏊🏻‍♀️", "⛹🏻‍♂️"
-    ];
+    }, [searchParams, isLoaded, nickname, avatarId, socket, avatars]);
 
     useEffect(() => {
         console.log("Socket instance:", socket.id, socket.connected);
@@ -339,5 +338,13 @@ export default function Home() {
                 </div>
             </div>
         </div>
+    );
+}
+
+export default function Home() {
+    return (
+        <Suspense fallback={<div className="min-h-screen bg-[#0f0c29] flex items-center justify-center text-white font-bold text-2xl">Loading...</div>}>
+            <HomeContent />
+        </Suspense>
     );
 }
