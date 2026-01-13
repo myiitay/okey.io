@@ -197,6 +197,27 @@ export class HandValidator {
             if (this.solve(remaining)) return true;
         }
 
+        // 3. SPECIAL CASE: 12-13-1 Run
+        // Since we sort by value, '1' comes first. Standard 'findPossibleRuns' looks for 1-2-3.
+        // It misses 12-13-1 because 1 is processed before 12 and 13.
+        // We explicitly check if this '1' can complete a 12-13-1 chain.
+        if (current.value === 1 && !current.isJoker) {
+            const sameColor13 = rest.find(t => t.value === 13 && t.color === current.color && !t.isJoker);
+            const sameColor12 = rest.find(t => t.value === 12 && t.color === current.color && !t.isJoker);
+
+            if (sameColor13 && sameColor12) {
+                // We found a strict 12-13-1. 
+                // (Note: This simple check ignores Jokers taking place of 12 or 13, 
+                // but for MVP this covers the most common failure case. 
+                // enhancing to support Joker-13-1 or 12-Joker-1 would require more complex lookups 
+                // but let's add basic support first).
+
+                const group13_12 = [current, sameColor13, sameColor12];
+                const remaining = this.removeTiles(tiles, group13_12);
+                if (this.solve(remaining)) return true;
+            }
+        }
+
         return false;
     }
 

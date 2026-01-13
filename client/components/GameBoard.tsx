@@ -828,25 +828,53 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
     // Mode 2: Arrange by Color
     const arrangeByColor = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
         const newSlots: (TileData | null)[] = Array(30).fill(null);
+        let remainingTiles = [...normalTiles];
         const colors: ('red' | 'black' | 'blue' | 'yellow')[] = ['red', 'black', 'blue', 'yellow'];
 
         let cursor = 0;
         colors.forEach(color => {
-            const colorTiles = normalTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
-            colorTiles.forEach(tile => {
-                if (cursor < 30) {
-                    newSlots[cursor] = tile;
-                    cursor++;
+            const colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
+
+            if (colorTiles.length > 0) {
+                if (cursor + colorTiles.length <= 30) {
+                    colorTiles.forEach(tile => {
+                        newSlots[cursor] = tile;
+                        cursor++;
+                    });
+                    if (cursor < 30) cursor++; // Gap
+                } else {
+                    // No space for full group, leave for leftovers
                 }
-            });
-            if (colorTiles.length > 0 && cursor < 30) cursor++; // Gap between colors
+                // Remove from remaining
+                const ids = new Set(colorTiles.map(t => t.id));
+                remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
+            }
         });
 
-        // Add Jokers at end
+        // Place Jokers
         [...okeyTiles, ...fakeJokers].forEach(joker => {
             if (cursor < 30) {
                 newSlots[cursor] = joker;
                 cursor++;
+            } else {
+                const empty = newSlots.indexOf(null);
+                if (empty !== -1) newSlots[empty] = joker;
+            }
+        });
+
+        // Fill leftovers (including those that didn't fit in groups)
+        remainingTiles.forEach(t => {
+            let placed = false;
+            // Try cursor first
+            if (cursor < 30 && newSlots[cursor] === null) {
+                newSlots[cursor] = t;
+                cursor++;
+                placed = true;
+            }
+
+            if (!placed) {
+                const emptyIdx = newSlots.indexOf(null);
+                if (emptyIdx !== -1) newSlots[emptyIdx] = t;
             }
         });
 
@@ -856,25 +884,45 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
     // Mode 3: Arrange by Value
     const arrangeByValue = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
         const newSlots: (TileData | null)[] = Array(30).fill(null);
+        let remainingTiles = [...normalTiles];
         const values = Array.from(new Set(normalTiles.map(t => t.value))).sort((a, b) => a - b);
 
         let cursor = 0;
         values.forEach(val => {
-            const valueTiles = normalTiles.filter(t => t.value === val).sort((a, b) => a.color.localeCompare(b.color));
-            valueTiles.forEach(tile => {
-                if (cursor < 30) {
-                    newSlots[cursor] = tile;
-                    cursor++;
+            const valueTiles = remainingTiles.filter(t => t.value === val).sort((a, b) => a.color.localeCompare(b.color));
+
+            if (valueTiles.length > 0) {
+                if (cursor + valueTiles.length <= 30) {
+                    valueTiles.forEach(tile => {
+                        newSlots[cursor] = tile;
+                        cursor++;
+                    });
+                    if (cursor < 30) cursor++; // Gap
                 }
-            });
-            if (valueTiles.length > 0 && cursor < 30) cursor++; // Gap between values
+                const ids = new Set(valueTiles.map(t => t.id));
+                remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
+            }
         });
 
-        // Add Jokers at end
+        // Place Jokers
         [...okeyTiles, ...fakeJokers].forEach(joker => {
             if (cursor < 30) {
                 newSlots[cursor] = joker;
                 cursor++;
+            } else {
+                const empty = newSlots.indexOf(null);
+                if (empty !== -1) newSlots[empty] = joker;
+            }
+        });
+
+        // Fill leftovers
+        remainingTiles.forEach(t => {
+            if (cursor < 30 && newSlots[cursor] === null) {
+                newSlots[cursor] = t;
+                cursor++;
+            } else {
+                const emptyIdx = newSlots.indexOf(null);
+                if (emptyIdx !== -1) newSlots[emptyIdx] = t;
             }
         });
 
@@ -884,45 +932,61 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
     // Mode 4: Arrange by Potential (Near-complete groups)
     const arrangeByPotential = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
         const newSlots: (TileData | null)[] = Array(30).fill(null);
+        let remainingTiles = [...normalTiles];
         let cursor = 0;
 
         // Create copies to avoid mutation
         const availableOkeys = [...okeyTiles];
-        const availableFakes = [...fakeJokers];
-
-        // Find pairs and near-runs
-        const pairs: TileData[][] = [];
-        const nearRuns: TileData[][] = [];
+        const availableFakes = [...fakeJokers]; // Treat fakes as jokers for placement
 
         // Find pairs (same value, 2 different colors)
-        const values = Array.from(new Set(normalTiles.map(t => t.value)));
-        values.forEach(val => {
-            const valTiles = normalTiles.filter(t => t.value === val);
-            if (valTiles.length === 2) {
-                const uniqueColors = new Set(valTiles.map(t => t.color));
-                if (uniqueColors.size === 2) {
-                    pairs.push(valTiles);
-                }
+        const pairs: TileData[][] = [];
+        const values = Array.from(new Set(remainingTiles.map(t => t.value)));
+
+        // Simple pair finding logic
+        const valueGroups: Record<number, TileData[]> = {};
+        remainingTiles.forEach(t => {
+            if (!valueGroups[t.value]) valueGroups[t.value] = [];
+            valueGroups[t.value].push(t);
+        });
+
+        Object.values(valueGroups).forEach(group => {
+            if (group.length === 2 && group[0].color !== group[1].color) {
+                pairs.push(group);
+                // Mark as used
+                const ids = new Set(group.map(t => t.id));
+                remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
             }
         });
 
-        // Find near-runs (2 sequential tiles of same color)
+        // Find near-runs (2 sequential tiles of same color) from what's left
+        const nearRuns: TileData[][] = [];
         const colors: ('red' | 'black' | 'blue' | 'yellow')[] = ['red', 'black', 'blue', 'yellow'];
+
         colors.forEach(color => {
-            const colorTiles = normalTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
-            for (let i = 0; i < colorTiles.length - 1; i++) {
+            const colorTiles = remainingTiles.filter(t => t.color === color).sort((a, b) => a.value - b.value);
+            // Sliding window of 2
+            let i = 0;
+            while (i < colorTiles.length - 1) {
                 if (colorTiles[i + 1].value === colorTiles[i].value + 1) {
-                    nearRuns.push([colorTiles[i], colorTiles[i + 1]]);
+                    const run = [colorTiles[i], colorTiles[i + 1]];
+                    nearRuns.push(run);
+
+                    // Remove
+                    const ids = new Set(run.map(t => t.id));
+                    remainingTiles = remainingTiles.filter(t => !ids.has(t.id));
+
+                    i += 2; // Skip these two
+                } else {
+                    i++;
                 }
             }
         });
 
-        // Place pairs first
+        // Place pairs
         pairs.forEach(pair => {
-            if (cursor + pair.length + 1 <= 30) {
-                pair.forEach((t, i) => {
-                    newSlots[cursor + i] = t;
-                });
+            if (cursor + pair.length <= 30) {
+                pair.forEach((t, i) => newSlots[cursor + i] = t);
                 // Place Joker next to pair if available
                 if (availableOkeys.length > 0 && cursor + pair.length < 30) {
                     newSlots[cursor + pair.length] = availableOkeys.shift()!;
@@ -930,15 +994,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
                 } else {
                     cursor += pair.length + 1;
                 }
+            } else {
+                remainingTiles.push(...pair); // Fallback
             }
         });
 
         // Place near-runs
         nearRuns.forEach(run => {
-            if (cursor + run.length + 1 <= 30) {
-                run.forEach((t, i) => {
-                    newSlots[cursor + i] = t;
-                });
+            if (cursor + run.length <= 30) {
+                run.forEach((t, i) => newSlots[cursor + i] = t);
                 // Place Joker next to run if available
                 if (availableOkeys.length > 0 && cursor + run.length < 30) {
                     newSlots[cursor + run.length] = availableOkeys.shift()!;
@@ -946,24 +1010,30 @@ export const GameBoard: React.FC<GameBoardProps> = ({ roomCode, currentUser, gam
                 } else {
                     cursor += run.length + 1;
                 }
+            } else {
+                remainingTiles.push(...run);
             }
         });
 
-        // Fill remaining tiles
-        const usedIds = new Set([...pairs.flat(), ...nearRuns.flat()].map(t => t.id));
-        const remaining = normalTiles.filter(t => !usedIds.has(t.id));
-        remaining.sort((a, b) => a.color.localeCompare(b.color) || a.value - b.value).forEach(t => {
-            if (cursor < 30) {
-                newSlots[cursor] = t;
-                cursor++;
-            }
-        });
-
-        // Add remaining Jokers (both unused Okeys and all Fakes)
+        // Place remaining Jokers (both unused Okeys and all Fakes)
         [...availableOkeys, ...availableFakes].forEach(joker => {
             if (cursor < 30) {
                 newSlots[cursor] = joker;
                 cursor++;
+            } else {
+                const empty = newSlots.indexOf(null);
+                if (empty !== -1) newSlots[empty] = joker;
+            }
+        });
+
+        // Fill remaining tiles
+        remainingTiles.sort((a, b) => a.color.localeCompare(b.color) || a.value - b.value).forEach(t => {
+            if (cursor < 30 && newSlots[cursor] === null) {
+                newSlots[cursor] = t;
+                cursor++;
+            } else {
+                const emptyIdx = newSlots.indexOf(null);
+                if (emptyIdx !== -1) newSlots[emptyIdx] = t;
             }
         });
 
