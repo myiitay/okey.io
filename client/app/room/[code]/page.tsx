@@ -6,12 +6,22 @@ import { getSocket } from "@/utils/socket";
 import { GameBoard } from "@/components/GameBoard";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { soundManager } from "@/utils/soundManager";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface Player {
     id: string;
     name: string;
     avatar: string;
     readyToRestart?: boolean;
+    isReady?: boolean;
+    isBot?: boolean;
+    connected?: boolean;
+}
+
+interface RoomSettings {
+    turnTime: number;
+    targetScore: number;
+    isPublic: boolean;
 }
 
 interface RoomData {
@@ -21,6 +31,7 @@ interface RoomData {
     restartCount: number;
     gameStarted: boolean;
     gameMode?: '101' | 'standard';
+    settings?: RoomSettings;
 }
 
 export default function RoomPage() {
@@ -34,6 +45,8 @@ export default function RoomPage() {
 
     const [countdown, setCountdown] = useState<number | null>(null);
     const [isStarting, setIsStarting] = useState(false);
+    const [initialGameState, setInitialGameState] = useState<any>(null);
+    const [emotes, setEmotes] = useState<{ id: number, playerId: string, emote: string, text?: string }[]>([]);
 
     useEffect(() => {
         const check = () => {
@@ -94,6 +107,8 @@ export default function RoomPage() {
         });
 
         socket.on("gameStarted", (gameState: any) => {
+            console.log("Game started received in RoomPage:", gameState);
+            setInitialGameState(gameState);
             setRoomData(prev => prev ? { ...prev, gameStarted: true } : null);
             setCountdown(null);
             setIsStarting(false);
@@ -138,6 +153,19 @@ export default function RoomPage() {
             }
         });
 
+        socket.on("emoteReceived", (data: { playerId: string, emote: string, text?: string }) => {
+            const player = roomData?.players.find(p => p.id === data.playerId);
+            if (player) {
+                // Show floating emote
+                console.log(`Emote from ${player.name}: ${data.emote}`);
+                soundManager.play('click');
+            }
+            setEmotes(prev => [...prev, { id: Math.random(), playerId: data.playerId, emote: data.emote, text: data.text }]);
+            setTimeout(() => {
+                setEmotes(prev => prev.slice(1));
+            }, 3000);
+        });
+
         return () => {
             socket.off("updateRoom");
             socket.off("gameStarted");
@@ -145,6 +173,7 @@ export default function RoomPage() {
             socket.off("kicked");
             socket.off("banned");
             socket.off("autoTriggerStart");
+            socket.off("emoteReceived");
             socket.off("error");
         };
     }, [socket, router]);
@@ -180,6 +209,43 @@ export default function RoomPage() {
         if (confirm(t("kick_confirm") || "Are you sure you want to kick this player?")) {
             socket.emit("kickPlayer", playerId);
         }
+    };
+
+    const handleToggleReady = () => {
+        soundManager.play('click');
+        socket.emit("toggleReady");
+    };
+
+    const handleUpdateSettings = (settings: Partial<RoomSettings>) => {
+        socket.emit("updateSettings", settings);
+    };
+
+    const handleSendEmote = (emoteKey: string, emoji: string) => {
+        soundManager.play('click');
+        const text = t(emoteKey);
+        // We emit both emoji and text or just key? 
+        // Let's emit compiled text to be safe, or key if we want receiver to translate.
+        // User said: "emojilere yazılar da ekle".
+        // Let's send the text as well so everyone sees it (maybe receiver translates if we send key, but keeping it simple).
+        // Sending key allows full localization on receiver side!
+        // But current socket event might just be string?
+        // Let's change payload to object or just send text string if schema allows?
+        // Schema checks? It receives 'emote' string.
+        // I will hack it: send JSON string or just text? 
+        // Or better: Send emoji + " " + text?
+        // Or update server logic?
+        // Wait, I can only update server room manager to pass through whatever payload? 
+        // RoomManager.ts: socket.on('sendEmote', (emote: string) => ... emit('emoteReceived', { emote: emote })
+        // It passes string. So I can pass a JSON string or just the emoji.
+        // But better is to just update client to show text based on emoji map LOCALLY if I send valid key/emoji?
+        // Wait, different languages...
+        // If I send "Yanıyorsun!", an English user sees Turkish.
+        // Best approach: Send the KEY (e.g. "emote_fire") or identifiers.
+        // Client `emote` state needs to support text lookup.
+        // Let's send the EMOJI char itself, and map it back to text on receiver? 
+        // Mapping: "🔥" -> "emote_fire".
+
+        socket.emit("sendEmote", emoji);
     };
 
 
@@ -222,7 +288,15 @@ export default function RoomPage() {
     </div>;
 
     if (roomData.gameStarted) {
-        return <GameBoard roomCode={code as string} currentUser={currentUser} gameMode={roomData.gameMode} isSpectator={isSpectator} />;
+        return (
+            <GameBoard
+                roomCode={code as string}
+                currentUser={currentUser}
+                gameMode={roomData.gameMode}
+                isSpectator={isSpectator}
+                initialGameState={initialGameState}
+            />
+        );
     }
 
     // --- COUNTDOWN OVERLAY ---
@@ -253,6 +327,33 @@ export default function RoomPage() {
             <div className={`absolute top-0 right-0 w-[500px] h-[500px] ${is101Mode ? 'bg-red-600/20' : 'bg-purple-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`}></div>
             <div className={`absolute bottom-0 left-0 w-[500px] h-[500px] ${is101Mode ? 'bg-rose-600/20' : 'bg-blue-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`} style={{ animationDelay: "1s" }}></div>
 
+            {/* Quick Emotes Panel */}
+            <div className="absolute bottom-6 left-6 z-50 flex gap-2 flex-wrap max-w-[50vw]">
+                {[
+                    { key: "emote_fire", icon: "🔥" },
+                    { key: "emote_cool", icon: "😎" },
+                    { key: "emote_think", icon: "🤔" },
+                    { key: "emote_wave", icon: "👋" },
+                    { key: "emote_dice", icon: "🎲" },
+                    { key: "emote_laugh", icon: "😂" },
+                    { key: "emote_luck", icon: "🍀" }, // Added luck
+                    { key: "emote_sad", icon: "😢" },   // Added sad
+                    { key: "emote_clap", icon: "👏" }   // Added clap
+                ].map((item) => (
+                    <button
+                        key={item.key}
+                        onClick={() => handleSendEmote(item.key, item.icon)}
+                        className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 hover:scale-125 transition-transform flex items-center justify-center text-2xl shadow-lg border-b-4 border-black/20 active:border-b-0 active:translate-y-1 relative group/tooltip"
+                    >
+                        {item.icon}
+                        {/* Tooltip for text preview */}
+                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black/80 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/tooltip:opacity-100 pointer-events-none whitespace-nowrap transition-opacity">
+                            {t(item.key)}
+                        </div>
+                    </button>
+                ))}
+            </div>
+
             <div className="relative w-full max-w-4xl grid grid-cols-1 md:grid-cols-[350px_1fr] gap-8">
 
                 {/* LEFT COL: INFO CARD */}
@@ -279,7 +380,6 @@ export default function RoomPage() {
                                 {code}
                             </div>
                             <button
-                                onMouseEnter={() => soundManager.play('hover')}
                                 onClick={() => { soundManager.play('click'); handleCopy(); }}
                                 className={`
                                     flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold transition-all duration-300
@@ -293,12 +393,58 @@ export default function RoomPage() {
 
                     {/* Exit Button */}
                     <button
-                        onMouseEnter={() => soundManager.play('hover')}
                         onClick={() => { soundManager.play('click'); handleLeave(); }}
-                        className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 hover:border-red-500/50 p-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 group"
+                        className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 hover:border-red-500/50 p-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 group mb-2"
                     >
                         <span className="group-hover:-translate-x-1 transition-transform">⬅</span> {t("exit")}
                     </button>
+
+                    {/* Host Settings Panel */}
+                    {isHost && roomData.settings && (
+                        <div className="bg-white/5 backdrop-blur-xl rounded-[2rem] p-6 border border-white/10 shadow-2xl space-y-4">
+                            <div className="text-xs font-bold uppercase tracking-[0.2em] text-white/50 border-b border-white/5 pb-3 mb-2 flex items-center gap-2">
+                                ⚙️ {t("settings")}
+                            </div>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <div className="flex justify-between text-xs font-bold text-white/60 mb-2">
+                                        <span>{t("turn_time")}</span>
+                                        <span className="text-yellow-400">{roomData.settings.turnTime} {t("seconds")}</span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {[15, 30, 60].map(time => (
+                                            <button
+                                                key={time}
+                                                onClick={() => handleUpdateSettings({ turnTime: time })}
+                                                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${roomData.settings?.turnTime === time ? 'bg-yellow-500 text-black border-yellow-400' : 'bg-white/5 text-white/40 border-white/10 hover:bg-white/10'}`}
+                                            >
+                                                {time}s
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs font-bold text-white/60 mb-2">
+                                        <span>{t("target_score")}</span>
+                                        <span className="text-yellow-400">{roomData.settings.targetScore}</span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {[10, 20, 50].filter(() => false).concat([3, 5, 10]).map(score => ( // Updated to 3, 5, 10
+                                            <button
+                                                key={score}
+                                                onClick={() => handleUpdateSettings({ targetScore: score })}
+                                                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${roomData.settings?.targetScore === score ? 'bg-yellow-500 text-black border-yellow-400' : 'bg-white/5 text-white/40 border-white/10 hover:bg-white/10'}`}
+                                            >
+                                                {score}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
 
@@ -341,13 +487,45 @@ export default function RoomPage() {
                                                 {player.id === socket.id && <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">{t("you")}</span>}
                                                 {index === 0 && <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">HOST</span>}
                                             </div>
+                                            {/* Emote Bubble */}
+                                            <AnimatePresence>
+                                                {emotes.find(e => e.playerId === player.id) && (
+                                                    <motion.div
+                                                        key={emotes.find(e => e.playerId === player.id)?.id}
+                                                        initial={{ scale: 0, y: 0, opacity: 0 }}
+                                                        animate={{ scale: 1.1, y: -50, opacity: 1 }}
+                                                        exit={{ scale: 0.5, y: -70, opacity: 0 }}
+                                                        className="absolute -top-2 -right-10 bg-white text-black px-4 py-2 rounded-2xl rounded-bl-none flex items-center gap-2 shadow-[0_10px_30px_rgba(0,0,0,0.3)] z-50 border-2 border-yellow-400 min-w-[80px]"
+                                                    >
+                                                        <span className="text-2xl">{emotes.find(e => e.playerId === player.id)?.emote}</span>
+                                                        <span className="text-xs font-bold whitespace-nowrap">
+                                                            {/* Reverse lookup text from icon - quick hack since we send icon */}
+                                                            {(() => {
+                                                                const icon = emotes.find(e => e.playerId === player.id)?.emote;
+                                                                const map: any = {
+                                                                    "🔥": "emote_fire", "😎": "emote_cool", "🤔": "emote_think",
+                                                                    "👋": "emote_wave", "🎲": "emote_dice", "😂": "emote_laugh",
+                                                                    "🍀": "emote_luck", "😢": "emote_sad", "👏": "emote_clap"
+                                                                };
+                                                                return t(map[icon as string] || "");
+                                                            })()}
+                                                        </span>
+                                                    </motion.div>
+                                                )}
+                                            </AnimatePresence>
+                                            {/* Ready Status */}
+                                            <div className={`flex items-center gap-1.5 mt-1`}>
+                                                <div className={`w-2 h-2 rounded-full ${player.isReady ? 'bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]' : 'bg-gray-600'}`}></div>
+                                                <span className={`text-[10px] font-black uppercase tracking-widest ${player.isReady ? 'text-green-400' : 'text-gray-500'}`}>
+                                                    {player.isReady ? t("ready") : t("waiting_players")}
+                                                </span>
+                                            </div>
                                         </div>
 
                                         {/* Host Controls */}
                                         {isHost && player.id !== socket.id && (
                                             <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <button
-                                                    onMouseEnter={() => soundManager.play('hover')}
                                                     onClick={() => { soundManager.play('click'); handleKick(player.id); }}
                                                     className="bg-red-500/20 hover:bg-red-500/80 text-red-200 hover:text-white p-2 rounded-lg transition-colors border border-red-500/30"
                                                     title={t("kick")}
@@ -385,28 +563,42 @@ export default function RoomPage() {
                     </div>
 
                     {/* Start Action */}
-                    <div className="mt-auto">
-                        {isHost ? (
+                    <div className="mt-auto flex gap-4">
+                        {!isHost && (
                             <button
-                                onMouseEnter={() => soundManager.play('hover')}
-                                onClick={() => { soundManager.play('click'); handleStartGame(); }}
-                                disabled={roomData.players.length !== 2 && roomData.players.length !== 4 || isStarting}
-                                className={`
-                                    w-full relative py-5 rounded-[1.5rem] font-black text-2xl text-white shadow-xl overflow-hidden transition-all duration-300
-                                    ${(roomData.players.length !== 2 && roomData.players.length !== 4) || isStarting ? 'bg-gray-600 cursor-not-allowed scale-95 opacity-80 grayscale' : 'bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 hover:shadow-[0_0_40px_rgba(34,197,94,0.4)] hover:scale-[1.02] active:scale-95'}
-                                `}
+                                onClick={handleToggleReady}
+                                className={`flex-1 py-5 rounded-[1.5rem] font-black text-xl transition-all border-b-8 shadow-xl active:border-b-0 active:translate-y-2 ${roomData.players.find(p => p.id === socket.id)?.isReady ? 'bg-green-500 text-white border-green-700' : 'bg-gray-700 text-gray-400 border-gray-900'}`}
                             >
-                                <span className={`relative z-10 flex items-center justify-center gap-3 ${isStarting ? 'animate-pulse' : ''}`}>
-                                    {isStarting ? t("starting") : t("start_match")}
-                                    {!isStarting && <span className="text-3xl">🚀</span>}
-                                </span>
-                                {/* Shine Effect */}
-                                {!isStarting && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>}
+                                {roomData.players.find(p => p.id === socket.id)?.isReady ? t("ready") : t("unready")}
                             </button>
-                        ) : (
-                            <div className="w-full bg-white/5 backdrop-blur border border-white/10 py-5 rounded-[1.5rem] text-center text-white/50 font-bold text-lg animate-pulse flex flex-col gap-1">
-                                <span>{t("waiting_host")}</span>
+                        )}
 
+                        {isHost ? (
+                            <div className="flex-1 flex flex-col gap-2">
+                                {!roomData.players.every(p => p.isReady || p.id === socket.id || p.isBot) && (
+                                    <div className="text-center text-xs font-bold text-yellow-400 animate-pulse bg-yellow-400/10 py-2 rounded-xl border border-yellow-400/20">
+                                        ⚠️ {t("everyone_ready_warning")}
+                                    </div>
+                                )}
+                                <button
+                                    onClick={() => { soundManager.play('click'); handleStartGame(); }}
+                                    disabled={roomData.players.length !== 2 && roomData.players.length !== 4 || isStarting}
+                                    className={`
+                                        w-full relative py-5 rounded-[1.5rem] font-black text-2xl text-white shadow-xl overflow-hidden transition-all duration-300
+                                        ${(roomData.players.length !== 2 && roomData.players.length !== 4) || isStarting ? 'bg-gray-600 cursor-not-allowed scale-95 opacity-80 grayscale' : 'bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 hover:shadow-[0_0_40px_rgba(34,197,94,0.4)] hover:scale-[1.02] active:scale-95'}
+                                    `}
+                                >
+                                    <span className={`relative z-10 flex items-center justify-center gap-3 ${isStarting ? 'animate-pulse' : ''}`}>
+                                        {isStarting ? t("starting") : t("start_match")}
+                                        {!isStarting && <span className="text-3xl">🚀</span>}
+                                    </span>
+                                    {/* Shine Effect */}
+                                    {!isStarting && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>}
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex-1 bg-white/5 backdrop-blur border border-white/10 py-5 rounded-[1.5rem] text-center text-white/50 font-bold text-lg animate-pulse flex flex-col gap-1 justify-center">
+                                <span>{t("waiting_host")}</span>
                             </div>
                         )}
                     </div>

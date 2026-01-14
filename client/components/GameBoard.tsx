@@ -38,6 +38,7 @@ interface GameBoardProps {
     currentUser: { id: string; name: string };
     gameMode?: '101' | 'standard';
     isSpectator?: boolean;
+    initialGameState?: GameState | null;
 }
 
 
@@ -47,17 +48,29 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     roomCode,
     currentUser,
     gameMode,
-    isSpectator = false
+    isSpectator = false,
+    initialGameState = null
 }) => {
     const is101Mode = gameMode === '101';
     const socket = getSocket();
-    const [gameState, setGameState] = useState<GameState | null>(null);
+    const [gameState, setGameState] = useState<GameState | null>(initialGameState);
     const [playersMap, setPlayersMap] = useState<Record<string, { name: string, avatar: string }>>({});
-    const [localHand, setLocalHand] = useState<TileData[]>([]); // For Drag and Drop
+    const [localHand, setLocalHand] = useState<TileData[]>(initialGameState?.players.find(p => p.id === currentUser.id)?.hand || []); // For Drag and Drop
     // RACK LOGIC (30 Slots)
-    const [rackSlots, setRackSlots] = useState<(TileData | null)[]>(Array(30).fill(null));
+    const [rackSlots, setRackSlots] = useState<(TileData | null)[]>(() => {
+        if (initialGameState) {
+            const myIdx = initialGameState.players.findIndex(p => p.id === currentUser.id);
+            if (myIdx !== -1) {
+                const slots = Array(30).fill(null);
+                initialGameState.players[myIdx].hand.forEach((t: any, i: number) => { if (i < 30) slots[i] = t; });
+                return slots;
+            }
+        }
+        return Array(30).fill(null);
+    });
     const [showSideHint, setShowSideHint] = useState(false);
     const [lastTurnState, setLastTurnState] = useState(false);
+    const [lastDiscardCount, setLastDiscardCount] = useState<number>(0);
     const [disconnectMsg, setDisconnectMsg] = useState<string | null>(null);
 
     // Unified Draw/Animation State to prevent race conditions
@@ -78,8 +91,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     const [arrangeMode, setArrangeMode] = useState<'groups' | 'color' | 'value' | 'potential'>('groups');
     const [roomData, setRoomData] = useState<any>(null);
     const { t } = useLanguage();
-    const [isPlayingIntro, setIsPlayingIntro] = useState(false);
-    const [introStep, setIntroStep] = useState<'dealing' | 'revealing' | 'fading' | 'done'>('done');
+    const [isPlayingIntro, setIsPlayingIntro] = useState(!!initialGameState && initialGameState.status === 'PLAYING');
+    const [introStep, setIntroStep] = useState<'dealing' | 'revealing' | 'fading' | 'done'>(!!initialGameState && initialGameState.status === 'PLAYING' ? 'dealing' : 'done');
     const [disconnectedPlayers, setDisconnectedPlayers] = useState<Set<string>>(new Set());
     const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
 
@@ -238,14 +251,31 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
 
 
-    // Track turn change to show hint
+    // Track turn change to show hint AND play sound (conditionally)
     useEffect(() => {
         if (gameState) {
             const myIdx = gameState.players.findIndex(p => p.id === currentUser.id);
             const isMyTurn = gameState.players[myIdx]?.isTurn;
 
             if (isMyTurn && !lastTurnState) {
-                soundManager.play('your_turn');
+                // Determine who played before me
+                // Turn order 0->1->2->3. Predecessor is (myIdx - 1)
+                // If the turn passed from Left Neighbor -> Me, user requested SILENCE.
+                // Because they see the tile throw.
+
+                // Note: We don't track 'who played last' explicitly in GameState, 
+                // but we can assume normal flow.
+                // However, 'your_turn' is generic. 
+                // Let's just silence it if the last action was a discard from left? 
+                // Or simply: If it's my turn, and I just saw a discard from left...
+
+                // Let's use the 'prevDiscardCounts' logic to set a flag? 
+                // Or better: Just don't play 'your_turn' sound if the game flow is normal?
+                // Users usually want turn sound if they are alt-tabbed.
+                // But the user specifically hates "dın dın" on left throw.
+                // So let's skip 'your_turn' sound.
+
+                // soundManager.play('your_turn'); // DISABLED based on user feedback "gelmesin artık"
                 setShowSideHint(true);
                 const timer = setTimeout(() => setShowSideHint(false), 5000);
                 return () => clearTimeout(timer);
@@ -253,6 +283,40 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             setLastTurnState(isMyTurn);
         }
     }, [gameState, currentUser.id, lastTurnState]);
+
+    // Track discards per player to handle conditional sounds
+    const [prevDiscardCounts, setPrevDiscardCounts] = useState<number[]>([]);
+
+    useEffect(() => {
+        if (!gameState) return;
+
+        const currentCounts = gameState.players.map(p => p.discards.length);
+        const myIdx = gameState.players.findIndex(p => p.id === currentUser.id);
+
+        if (prevDiscardCounts.length === currentCounts.length) {
+            currentCounts.forEach((count, idx) => {
+                if (count > (prevDiscardCounts[idx] || 0)) {
+                    // Safety check
+                    if (myIdx === -1) {
+                        soundManager.play('discard');
+                        return;
+                    }
+
+                    // Calculate Left Neighbor Index (Previous Player)
+                    // If flow is 0->1->2->3, player (idx-1) throws to idx.
+                    // Visually: Bottom(0), Right(1), Top(2), Left(3).
+                    // 3 throws to 0. 3 is Left of 0.
+                    // Play sound for everyone (including left neighbor now, as requested)
+                    // The 'dın dın' (your_turn) sound is silenced elsewhere, so this will just be the 'click/discard' sound.
+                    soundManager.play('discard');
+                }
+            });
+        }
+
+        setPrevDiscardCounts(currentCounts);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [gameState?.players, currentUser.id]);
+
 
     // Intro Animation Sequence
     useEffect(() => {
@@ -263,12 +327,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             // If server emits jokerRevealed, it sets introStep to 'revealing'.
             return;
         } else if (introStep === 'revealing') {
+            // Show reveal for 3 seconds with smooth fade-out
             const timer = setTimeout(() => {
-                setIntroStep('fading');
-                setTimeout(() => {
-                    setIntroStep('done');
-                    setIsPlayingIntro(false);
-                }, 1000);
+                setIntroStep('done');
+                setIsPlayingIntro(false);
             }, 3000);
             return () => clearTimeout(timer);
         }
@@ -330,6 +392,20 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
         const onError = (msg: string) => {
             console.error("Game Error:", msg);
+
+            // Suppress trivial errors from double-clicks or known states
+            const suppressedErrors = [
+                "Did you already draw?",
+                "Already drew",
+                "Not your turn",
+                "You must draw before discarding" // happens if drag too fast
+            ];
+
+            if (suppressedErrors.some(e => msg.includes(e))) {
+                // Do not play sound, do not show toast
+                return;
+            }
+
             soundManager.play('error');
             setDisconnectMsg(msg);
             setTimeout(() => setDisconnectMsg(null), 4000);
@@ -360,12 +436,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     }, [socket, currentUser.id, roomCode]); // Removed playersMap from dependencies
 
     const handleDragStart = () => {
-        // soundManager.play('grab');
+        soundManager.play('grab');
     };
 
     const handleDragEnd = (event: DragEndEvent) => {
-        // Play drop sound for any drag end (movement/drop)
-
+        // Play drop sound for any drag end
+        soundManager.play('drop');
 
         const { active, over } = event;
 
@@ -479,17 +555,46 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         if (e) e.stopPropagation();
         const pIdx = gameState?.players.findIndex(p => p.id === currentUser.id);
         const player = pIdx !== undefined && pIdx !== -1 ? gameState?.players[pIdx] : null;
-        const isTurn = player?.isTurn;
 
-        if (!isTurn || drawStatus.isPending || !gameState || !player || player.hand.length >= 15 || pIdx === undefined) return;
+        // Robust check to prevent double-draw / double-click
+        if (!gameState || !player || pIdx === undefined) return;
+
+        // Check if already 15 tiles (already drawn)
+        if (player.hand.length >= 15) return;
+
+        // Check if turn
+        if (!player.isTurn) return;
+
+        // Check visual animations
+        if (drawStatus.isPending) return;
+
+        setDrawStatus({ isPending: true, source: 'left', animatingTile: null, stage: 'flying' }); // animatingTile set below
+
         const leftPlayerIndex = (pIdx - 1 + gameState.players.length) % gameState.players.length;
         if (gameState.players[leftPlayerIndex].discards.length === 0) return;
+
         const tileToTake = gameState.players[leftPlayerIndex].discards.slice(-1)[0];
-        setDrawStatus({ isPending: true, source: 'left', animatingTile: tileToTake, stage: 'flying' });
+
+        // Update local state immediately for animation
+        setDrawStatus(prev => ({ ...prev, animatingTile: tileToTake }));
         socket.emit("gameAction", { type: "DRAW_LEFT" });
     };
 
     const handleFinishGame = (tileId: number) => {
+        const pIdx = gameState?.players.findIndex(p => p.id === currentUser.id);
+        if (pIdx === undefined || pIdx === -1 || !gameState) return;
+
+        const handLength = gameState.players[pIdx].hand.length;
+
+        // Client-side validation: Must have 15 tiles to finish
+        if (handLength !== 15) {
+            soundManager.play('error');
+            // Show a non-blocking toast/notification instead of throwing error
+            setDisconnectMsg("Bitirmek için elinizde 15 taş olmalı (Bitiş taşı dahil)!");
+            setTimeout(() => setDisconnectMsg(null), 4000);
+            return;
+        }
+
         socket.emit('gameAction', { type: 'FINISH_GAME', payload: { tileId } });
     };
 
@@ -561,148 +666,149 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
     if (!gameState) return <div className="h-screen bg-[#1e3a29] flex items-center justify-center text-white">{t("connecting")}</div>;
 
-    // --- RENDER INTRO ---
-    if (isPlayingIntro) {
-        if (introStep !== 'done') {
-            return (
-                <div
-                    className={`fixed inset-0 z-50 flex items-center justify-center ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} overflow-hidden transition-opacity duration-1000 ease-in-out ${introStep === 'fading' ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-                >
-                    {/* Immersive Background */}
-                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 animate-pulse"></div>
-                    <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-red-900/30 via-transparent to-rose-900/30' : 'bg-gradient-to-br from-purple-900/30 via-transparent to-blue-900/30'}`}></div>
+    // --- RENDER INTRO COMPONENT ---
+    const IntroOverlay = () => {
+        if (!isPlayingIntro || introStep === 'done') return null;
 
-                    {/* Central Focus */}
-                    <div className="relative z-10 flex flex-col items-center justify-center">
+        return (
+            <motion.div
+                initial={{ opacity: 1 }}
+                animate={{ opacity: introStep === 'revealing' ? [1, 1, 0] : 1 }}
+                transition={{
+                    duration: introStep === 'revealing' ? 3 : 1,
+                    times: introStep === 'revealing' ? [0, 0.8, 1] : undefined,
+                    ease: "easeInOut"
+                }}
+                className={`fixed inset-0 z-[100] flex items-center justify-center ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} overflow-hidden`}
+            >
+                {/* Immersive Background */}
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 animate-pulse"></div>
+                <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-red-900/40 via-transparent to-rose-900/40' : 'bg-gradient-to-br from-purple-900/40 via-transparent to-blue-900/40'}`}></div>
 
-                        {/* 1. DEALING ANIMATION */}
-                        {introStep === 'dealing' && (
-                            <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center">
-                                {/* Animated Deck & Dealing Action */}
-                                <div className="relative w-64 h-64 mb-12 flex items-center justify-center">
-                                    {/* Center Glow */}
-                                    <div className={`absolute w-32 h-32 ${is101Mode ? 'bg-red-500/20' : 'bg-yellow-500/20'} rounded-full blur-[60px] animate-pulse`}></div>
+                {/* Central Focus */}
+                <div className="relative z-10 flex flex-col items-center justify-center w-full h-full">
 
-                                    {/* The Deck (Center) */}
-                                    <div className="relative w-24 h-32 bg-[#3e2723] rounded-lg shadow-2xl border-2 border-[#5d4037] z-20 flex items-center justify-center">
-                                        <div className="w-20 h-28 bg-[#fdfcdc] opacity-10 rounded border border-white/20"></div>
-                                    </div>
-
-                                    {/* Dealing Particles */}
-                                    {[0, 1, 2, 3].map((i) => (
-                                        <div key={i} className="absolute inset-0 flex items-center justify-center z-10">
-                                            <div className="w-12 h-16 bg-[#fdfcdc] rounded shadow-xl border border-gray-300"
-                                                style={{ animation: `dealTo${i} 1s ease-out infinite`, animationDelay: `${i * 0.15}s` }}
-                                            />
-                                        </div>
-                                    ))}
-                                </div>
-                                <h2 className={`text-4xl md:text-5xl font-black text-transparent bg-clip-text ${is101Mode ? 'bg-gradient-to-r from-red-200 via-red-400 to-red-200' : 'bg-gradient-to-r from-yellow-200 via-yellow-400 to-yellow-200'} animate-pulse tracking-wider`}>
-                                    Taşlar Dağıtılıyor...
+                    {/* 1. DEALING ANIMATION (PREMIUM & PHYSICAL) */}
+                    {introStep === 'dealing' && (
+                        <div className="flex flex-col items-center">
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="mb-16 text-center"
+                            >
+                                <h2 className={`text-6xl md:text-8xl font-black text-transparent bg-clip-text ${is101Mode ? 'bg-gradient-to-b from-red-200 to-red-600' : 'bg-gradient-to-b from-yellow-200 to-yellow-600'} tracking-tighter italic drop-shadow-2xl`}>
+                                    OYUN BAŞLIYOR
                                 </h2>
+                                <div className="h-1 w-full bg-gradient-to-r from-transparent via-white/20 to-transparent mt-4"></div>
+                            </motion.div>
+
+                            <div className="relative w-80 h-80 flex items-center justify-center">
+                                {/* Deck */}
+                                <motion.div
+                                    className="relative z-20 w-32 h-44 bg-[#3e2723] rounded-2xl shadow-2xl border-2 border-white/10 flex items-center justify-center"
+                                >
+                                    <div className="text-5xl opacity-40">🎴</div>
+                                </motion.div>
+
+                                {/* Flying Tile Stacks */}
+                                {[0, 1, 2, 3].map((playerIdx) => (
+                                    [0, 1, 2].map((stackIdx) => (
+                                        <motion.div
+                                            key={`${playerIdx}-${stackIdx}`}
+                                            initial={{ x: 0, y: 0, scale: 0.5, opacity: 0, rotate: 0 }}
+                                            animate={{
+                                                x: playerIdx === 0 ? 0 : playerIdx === 1 ? 500 : playerIdx === 2 ? 0 : -500,
+                                                y: playerIdx === 0 ? 500 : playerIdx === 1 ? 0 : playerIdx === 2 ? -500 : 0,
+                                                scale: 1,
+                                                opacity: [0, 1, 0],
+                                                rotate: playerIdx * 90 + (stackIdx * 10)
+                                            }}
+                                            transition={{
+                                                duration: 1,
+                                                repeat: Infinity,
+                                                ease: "circOut",
+                                                delay: playerIdx * 0.2 + stackIdx * 0.1
+                                            }}
+                                            className="absolute z-10"
+                                        >
+                                            <div className="w-14 h-20 bg-[#fdfcdc] rounded-lg shadow-xl border border-gray-400"></div>
+                                        </motion.div>
+                                    ))
+                                ))}
                             </div>
-                        )}
+                        </div>
+                    )}
 
-                        {/* 2. JOKER REVEAL ANIMATION */}
-                        {introStep === 'revealing' && (
-                            <div className="animate-in zoom-in slide-in-from-bottom-10 duration-700 flex flex-col items-center">
-                                <div className="relative w-48 h-64 mb-8 perspective-1000">
-                                    {/* Card Container with Flip Animation */}
-                                    <div className="w-full h-full relative preserve-3d animate-[flipReveal_1.5s_ease-out_forwards]">
+                    {/* 2. JOKER REVEAL ANIMATION (STAYED PREMIUM) */}
+                    {introStep === 'revealing' && (
+                        <div className="relative flex flex-col items-center">
+                            {/* Shockwave */}
+                            <motion.div
+                                initial={{ scale: 0, opacity: 1 }}
+                                animate={{ scale: 6, opacity: 0 }}
+                                transition={{ duration: 1.5, ease: "easeOut" }}
+                                className={`absolute w-64 h-64 rounded-full border-[10px] ${is101Mode ? 'border-red-500' : 'border-yellow-400'} z-0`}
+                            />
 
-                                        {/* FRONT (Shows the Joker Tile) - Initially hidden */}
-                                        <div className={`absolute inset-0 backface-hidden flex items-center justify-center rounded-xl ${is101Mode ? 'shadow-[0_0_50px_rgba(255,0,0,0.6)] bg-gradient-to-br from-red-100 to-red-50 border-4 border-red-500' : 'shadow-[0_0_50px_rgba(255,215,0,0.6)] bg-gradient-to-br from-yellow-100 to-yellow-50 border-4 border-yellow-500'}`} style={{ transform: 'rotateY(180deg)' }}>
-                                            {/* Huge Tile Render */}
-                                            <div className="scale-150">
-                                                <Tile {...gameState.indicator} size="lg" />
-                                            </div>
-
-                                            {/* Shine Effect */}
-                                            <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/40 to-transparent pointer-events-none animate-[shimmer_2s_infinite]"></div>
-                                        </div>
-
-                                        {/* BACK (Deck Back) - Initially visible */}
-                                        <div className="absolute inset-0 backface-hidden bg-[#3e2723] rounded-xl border-4 border-[#5d4037] flex items-center justify-center shadow-2xl">
-                                            <div className="w-40 h-56 border-2 border-white/10 opacity-30 rounded-lg"></div>
-                                            <div className="absolute text-6xl opacity-20">🎴</div>
-                                        </div>
+                            <motion.div
+                                initial={{ scale: 0.2, rotateY: -180, opacity: 0 }}
+                                animate={{ scale: 1.2, rotateY: 0, opacity: 1 }}
+                                transition={{ duration: 0.8, ease: "backOut" }}
+                                className="relative z-10 w-64 h-80 perspective-1000"
+                            >
+                                <div className={`w-full h-full relative preserve-3d rounded-[2.5rem] overflow-hidden ${is101Mode ? 'bg-red-950 border-4 border-red-600 shadow-[0_0_150px_rgba(220,38,38,0.7)]' : 'bg-amber-950 border-4 border-yellow-500 shadow-[0_0_150px_rgba(234,179,8,0.7)]'}`}>
+                                    <div className="absolute inset-0 flex items-center justify-center scale-[3]">
+                                        <Tile {...gameState.indicator} size="lg" />
                                     </div>
+                                    <motion.div
+                                        animate={{ x: ['-200%', '200%'] }}
+                                        transition={{ duration: 1.5, repeat: 0, ease: "linear", delay: 0.5 }}
+                                        className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -skew-x-20"
+                                    />
                                 </div>
+                            </motion.div>
 
-                                <div className="text-center">
-                                    <h3 className={`text-2xl ${is101Mode ? 'text-red-100/60' : 'text-yellow-100/60'} font-serif italic mb-2`}>Gösterge Taşı</h3>
-                                    <h2 className="text-5xl font-black text-white drop-shadow-[0_4px_10px_rgba(0,0,0,1)]">
-                                        {getColorName(gameState.indicator.color)} {gameState.indicator.value}
-                                    </h2>
-                                </div>
-                            </div>
-                        )}
+                            <motion.div
+                                initial={{ opacity: 0, y: 50 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.5 }}
+                                className="text-center mt-16 z-20"
+                            >
+                                <h3 className={`text-2xl ${is101Mode ? 'text-red-400' : 'text-yellow-400'} font-black uppercase tracking-[1em] mb-4 opacity-70`}>GÖSTERGE</h3>
+                                <h2 className="text-8xl font-black text-white drop-shadow-[0_10px_40px_rgba(0,0,0,1)] tracking-tighter">
+                                    <span className={`${is101Mode ? 'text-red-200' : 'text-yellow-200'}`}>{getColorName(gameState.indicator.color).toUpperCase()}</span> {gameState.indicator.value}
+                                </h2>
 
-                    </div>
-
-                    {/* CSS Keyframes */}
-                    <style jsx>{`
-                        @keyframes dealTo0 { 0% { opacity:0; transform:translateY(0) scale(0.5); } 20% { opacity:1; transform:translateY(0) scale(1); } 100% { opacity:0; transform:translateY(-300px) rotate(10deg); } }
-                        @keyframes dealTo1 { 0% { opacity:0; transform:translateX(0) scale(0.5); } 20% { opacity:1; transform:translateX(0) scale(1); } 100% { opacity:0; transform:translateX(300px) rotate(90deg); } }
-                        @keyframes dealTo2 { 0% { opacity:0; transform:translateY(0) scale(0.5); } 20% { opacity:1; transform:translateY(0) scale(1); } 100% { opacity:0; transform:translateY(300px) rotate(-10deg); } }
-                        @keyframes dealTo3 { 0% { opacity:0; transform:translateX(0) scale(0.5); } 20% { opacity:1; transform:translateX(0) scale(1); } 100% { opacity:0; transform:translateX(-300px) rotate(-90deg); } }
-
-                        @keyframes flipReveal {
-                            0% { transform: rotateY(0) scale(0.5); }
-                            50% { transform: rotateY(90deg) scale(1.2); }
-                            100% { transform: rotateY(180deg) scale(1); }
-                        }
-
-                        @keyframes drawFlip {
-                            0% { transform: rotateY(180deg) translateZ(-50px); opacity: 0.5; }
-                            40% { transform: rotateY(90deg) translateZ(100px) scale(1.5); opacity: 1; }
-                            100% { transform: rotateY(0deg) translateZ(0) scale(2.3); }
-                        }
-
-                        @keyframes discardFlight {
-                            0% { transform: translate(-50%, 0) scale(1) rotate(0deg); opacity: 1; }
-                            20% { transform: translate(0px, -50px) scale(1.1) rotate(10deg); opacity: 1; }
-                            100% { transform: translate(350px, 100px) scale(0.7) rotate(180deg); opacity: 0; }
-                        }
-
-                        @keyframes shimmer {
-                            0%, 100% { opacity: 0; }
-                            50% { opacity: 0.3; }
-                        }
-
-                        .glass-tile-effect {
-                            backdrop-filter: blur(8px);
-                            background: rgba(253, 252, 220, 0.8) !important;
-                            border: 1px solid rgba(255, 255, 255, 0.3) !important;
-                        }
-
-                        .preserve-3d { transform-style: preserve-3d; }
-                        .backface-hidden { backface-visibility: hidden; }
-                        .rotate-y-180 { transform: rotateY(180deg); }
-
-                        /* SCATTER ANIMATIONS */
-                        @keyframes scatter-0 { to { transform: translate(100px, 500px) rotate(720deg); opacity: 0; } }
-                        @keyframes scatter-1 { to { transform: translate(-100px, 500px) rotate(-360deg); opacity: 0; } }
-                        @keyframes scatter-2 { to { transform: translate(50px, 400px) rotate(180deg); opacity: 0; } }
-                        @keyframes scatter-3 { to { transform: translate(-50px, 450px) rotate(-180deg); opacity: 0; } }
-
-                        @keyframes rackPulse {
-                            0% { transform: rotateX(5deg) scale(1); }
-                            50% { transform: rotateX(10deg) scale(1.02); filter: brightness(1.2); }
-                            100% { transform: rotateX(5deg) scale(1); }
-                        }
-
-                        @keyframes tilePop {
-                            0% { transform: scale(0.5) translateY(20px); opacity: 0; }
-                            70% { transform: scale(1.1) translateY(-5px); opacity: 1; }
-                            100% { transform: scale(1) translateY(0); opacity: 1; }
-                        }
-                    `}</style>
+                                <motion.div
+                                    initial={{ scaleX: 0, opacity: 0 }}
+                                    animate={{ scaleX: 1, opacity: 1 }}
+                                    transition={{ delay: 1.2, duration: 0.8 }}
+                                    className="mt-20 h-1 w-[30rem] bg-gradient-to-r from-transparent via-white/40 to-transparent relative mx-auto"
+                                >
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 20 }}
+                                        animate={{ opacity: 1, y: -50 }}
+                                        transition={{ delay: 1.5 }}
+                                        className="absolute left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur-2xl px-12 py-4 rounded-3xl border border-white/20 shadow-2xl"
+                                    >
+                                        <span className={`text-4xl font-black italic tracking-[0.3em] ${is101Mode ? 'text-red-200' : 'text-yellow-200'} animate-pulse`}>
+                                            MAÇ BAŞLIYOR
+                                        </span>
+                                    </motion.div>
+                                </motion.div>
+                            </motion.div>
+                        </div>
+                    )}
                 </div>
-            );
-        }
-        return null;
-    }
+
+                <style jsx>{`
+                    .preserve-3d { transform-style: preserve-3d; }
+                    .backface-hidden { backface-visibility: hidden; }
+                    @keyframes animate-spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                `}</style>
+            </motion.div>
+        );
+    };
 
     const DrawAnimationOverlay = () => {
         if (!drawStatus.animatingTile || !drawStatus.stage) return null;
@@ -794,287 +900,327 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             <div className={`absolute top-0 right-0 w-[800px] h-[800px] ${is101Mode ? 'bg-red-600/10' : 'bg-green-600/10'} rounded-full blur-[120px] pointer-events-none animate-pulse`}></div>
             <div className={`absolute bottom-0 left-0 w-[800px] h-[800px] ${is101Mode ? 'bg-rose-600/10' : 'bg-emerald-600/10'} rounded-full blur-[120px] pointer-events-none animate-pulse`} style={{ animationDelay: "2s" }}></div>
 
-            <AnimatePresence>
+            {/* Particle Atmosphere */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                {[...Array(20)].map((_, i) => (
+                    <motion.div
+                        key={i}
+                        initial={{
+                            x: Math.random() * 100 + "%",
+                            y: Math.random() * 100 + "%",
+                            opacity: 0,
+                            scale: Math.random() * 0.5 + 0.5
+                        }}
+                        animate={{
+                            y: ["-10%", "110%"],
+                            opacity: [0, 0.2, 0],
+                            rotate: 360
+                        }}
+                        transition={{
+                            duration: Math.random() * 10 + 10,
+                            repeat: Infinity,
+                            ease: "linear",
+                            delay: Math.random() * 10
+                        }}
+                        className={`absolute w-1 h-1 rounded-full ${is101Mode ? 'bg-red-200' : 'bg-white'}`}
+                    />
+                ))}
+            </div>
 
-            </AnimatePresence>
-            <DrawAnimationOverlay />
-            <DiscardAnimationOverlay />
-            {gameState.status === 'FINISHED' && (
-                <WinnerOverlay
-                    gameState={gameState}
-                    currentUser={currentUser}
-                    roomData={roomData}
-                    onRestartVote={handleRestartVote}
-                    onLeave={handleLeave}
+            {/* Intro Overlay moved outside blurred container */}
+            {(isPlayingIntro && introStep !== 'done') && <IntroOverlay />}
+
+            <motion.div
+                animate={{
+                    scale: isPlayingIntro ? 1.05 : 1,
+                    filter: isPlayingIntro ? 'blur(2px) brightness(0.8)' : 'blur(0px) brightness(1)'
+                }}
+                transition={{ duration: 1.5, ease: "easeInOut" }}
+                className="w-full h-full relative"
+            >
+
+                <AnimatePresence>
+                </AnimatePresence>
+
+                <DrawAnimationOverlay />
+                <DiscardAnimationOverlay />
+                {gameState.status === 'FINISHED' && (
+                    <WinnerOverlay
+                        gameState={gameState}
+                        currentUser={currentUser}
+                        roomData={roomData}
+                        onRestartVote={handleRestartVote}
+                        onLeave={handleLeave}
+                    />
+                )}
+                <Leaderboard
+                    isOpen={isLeaderboardOpen}
+                    onClose={() => setIsLeaderboardOpen(false)}
+                    players={roomData?.players || []}
+                    winScores={roomData?.winScores || {}}
                 />
-            )}
-            <Leaderboard
-                isOpen={isLeaderboardOpen}
-                onClose={() => setIsLeaderboardOpen(false)}
-                players={roomData?.players || []}
-                winScores={roomData?.winScores || {}}
-            />
-            {/* Chat Component */}
-            <Chat socket={socket} />
+                {/* Chat Component */}
+                <Chat socket={socket} />
 
-            {/* Disconnect Notification */}
-            {disconnectMsg && (
-                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[100] animate-bounce">
-                    <div className="bg-red-600/90 text-white px-6 py-3 rounded-full font-bold shadow-[0_0_20px_red] backdrop-blur-md flex items-center gap-3 border border-red-400">
-                        <span className="text-2xl">⚠️</span>
-                        {disconnectMsg}
-                    </div>
-                </div>
-            )}
-
-            {/* --- ENVIRONMENT --- */}
-            {/* Table Texture */}
-            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/felt.png')] opacity-60 mix-blend-multiply pointer-events-none"></div>
-            {/* Vignette */}
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_20%,#000000_100%)] opacity-60 pointer-events-none"></div>
-
-            {/* Room Info */}
-            <div className="absolute top-4 left-4 z-50 flex gap-4 items-center">
-                {/* Back Button */}
-                <button
-                    onClick={handleLeave}
-                    className={`${is101Mode ? 'bg-red-700/80 hover:bg-red-600' : 'bg-red-600/80 hover:bg-red-600'} text-white px-4 py-2 rounded-lg font-bold shadow-lg backdrop-blur flex items-center gap-2 transition-transform hover:scale-105 active:scale-95`}
-                >
-                    <span>⬅</span> {t("exit")}
-                </button>
-
-                <div className="bg-black/40 backdrop-blur-md px-4 py-2 rounded-lg text-white/80 font-mono text-sm border border-white/10 shadow-lg">
-                    Code: <span className="text-yellow-400 font-bold">{roomCode}</span>
-                </div>
-
-
-            </div >
-
-            {/* Game End Overlay */}
-            {/* --- OPPONENTS --- */}
-
-            {/* TOP PLAYER */}
-            <div className="absolute top-8 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2 transition-opacity duration-500">
-                {topPlayer && (
-                    <>
-                        <PlayerAvatar player={topPlayer} info={playersMap[topPlayer.id]} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} />
-                        <OpponentRack player={topPlayer} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} />
-                    </>
-                )}
-            </div>
-
-            {/* LEFT PLAYER */}
-            <div className="absolute left-[15%] top-1/2 -translate-y-1/2 z-10 flex flex-row items-center gap-6">
-                {leftPlayer && (
-                    <div className="flex flex-col items-center gap-4">
-                        <PlayerAvatar player={leftPlayer} info={playersMap[leftPlayer.id]} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} />
-                        <div className="rotate-0 ml-0"> {/* Container tweak for vertical alignment */}
-                            <OpponentRack player={leftPlayer} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} />
+                {/* Disconnect Notification */}
+                {disconnectMsg && (
+                    <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[100] animate-bounce">
+                        <div className="bg-red-600/90 text-white px-6 py-3 rounded-full font-bold shadow-[0_0_20px_red] backdrop-blur-md flex items-center gap-3 border border-red-400">
+                            <span className="text-2xl">⚠️</span>
+                            {disconnectMsg}
                         </div>
                     </div>
                 )}
-            </div>
 
-            {/* RIGHT PLAYER */}
-            <div className="absolute right-[15%] top-1/2 -translate-y-1/2 z-10 flex flex-row-reverse items-center gap-6">
-                {rightPlayer && (
-                    <div className="flex flex-col items-center gap-4">
-                        <PlayerAvatar player={rightPlayer} info={playersMap[rightPlayer.id]} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} />
-                        <div className="rotate-0 mr-0">
-                            <OpponentRack player={rightPlayer} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} />
-                        </div>
+                {/* --- ENVIRONMENT --- */}
+                {/* Table Texture */}
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/felt.png')] opacity-60 mix-blend-multiply pointer-events-none"></div>
+                {/* Vignette */}
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_20%,#000000_100%)] opacity-60 pointer-events-none"></div>
+
+                {/* Room Info */}
+                <div className="absolute top-4 left-4 z-50 flex gap-4 items-center">
+                    {/* Back Button */}
+                    <button
+                        onClick={handleLeave}
+                        className={`${is101Mode ? 'bg-red-700/80 hover:bg-red-600' : 'bg-red-600/80 hover:bg-red-600'} text-white px-4 py-2 rounded-lg font-bold shadow-lg backdrop-blur flex items-center gap-2 transition-transform hover:scale-105 active:scale-95`}
+                    >
+                        <span>⬅</span> {t("exit")}
+                    </button>
+
+                    <div className="bg-black/40 backdrop-blur-md px-4 py-2 rounded-lg text-white/80 font-mono text-sm border border-white/10 shadow-lg">
+                        Code: <span className="text-yellow-400 font-bold">{roomCode}</span>
                     </div>
-                )}
-            </div>
 
-            {/* --- CENTER TABLE AREA --- */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[300px] z-0">
-                {/* Felt Zone Glow */}
-                <div className="absolute inset-0 bg-white/5 rounded-[50px] blur-3xl pointer-events-none"></div>
 
-                {/* DECK (Left Center-ish) */}
-                <div
-                    onClick={isMyTurn && gameState.centerCount > 0 && gameState.players[myIndex].hand.length < 15 ? handleDrawCenter : undefined}
-                    className={`
+                </div >
+
+                {/* Game End Overlay */}
+                {/* --- OPPONENTS --- */}
+
+                {/* TOP PLAYER */}
+                <div className="absolute top-8 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2 transition-opacity duration-500">
+                    {topPlayer && (
+                        <>
+                            <PlayerAvatar player={topPlayer} info={playersMap[topPlayer.id]} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} />
+                            <OpponentRack player={topPlayer} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} />
+                        </>
+                    )}
+                </div>
+
+                {/* LEFT PLAYER */}
+                <div className="absolute left-[15%] top-1/2 -translate-y-1/2 z-10 flex flex-row items-center gap-6">
+                    {leftPlayer && (
+                        <div className="flex flex-col items-center gap-4">
+                            <PlayerAvatar player={leftPlayer} info={playersMap[leftPlayer.id]} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} />
+                            <div className="rotate-0 ml-0"> {/* Container tweak for vertical alignment */}
+                                <OpponentRack player={leftPlayer} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} />
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* RIGHT PLAYER */}
+                <div className="absolute right-[15%] top-1/2 -translate-y-1/2 z-10 flex flex-row-reverse items-center gap-6">
+                    {rightPlayer && (
+                        <div className="flex flex-col items-center gap-4">
+                            <PlayerAvatar player={rightPlayer} info={playersMap[rightPlayer.id]} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} />
+                            <div className="rotate-0 mr-0">
+                                <OpponentRack player={rightPlayer} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} />
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* --- CENTER TABLE AREA --- */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[300px] z-0">
+                    {/* Felt Zone Glow */}
+                    <div className="absolute inset-0 bg-white/5 rounded-[50px] blur-3xl pointer-events-none"></div>
+
+                    {/* DECK (Left Center-ish) */}
+                    <div
+                        onClick={isMyTurn && gameState.centerCount > 0 && gameState.players[myIndex].hand.length < 15 ? handleDrawCenter : undefined}
+                        className={`
                         absolute left-[35%] top-1/2 -translate-y-1/2 -translate-x-1/2
                         w-24 h-32 bg-[#3e2723] rounded-sm transform rotate-[-5deg]
                         shadow-[5px_5px_15px_rgba(0,0,0,0.5)]
                         flex items-center justify-center transition-all duration-300 group
                         ${isMyTurn && gameState.players[myIndex].hand.length < 15 ? (is101Mode ? 'hover:-translate-y-2 hover:rotate-0 cursor-pointer ring-2 ring-red-400' : 'hover:-translate-y-2 hover:rotate-0 cursor-pointer ring-2 ring-yellow-400') : ''}
                     `}>
-                    {/* Deck Top Card (Back) */}
-                    <div className="w-20 h-28 bg-[#fdfcdc] rounded-[2px] border border-[#d7ccc8] flex items-center justify-center">
-                        <div className="w-14 h-20 border-2 border-[#8d6e63] opacity-20"></div>
+                        {/* Deck Top Card (Back) */}
+                        <div className="w-20 h-28 bg-[#fdfcdc] rounded-[2px] border border-[#d7ccc8] flex items-center justify-center">
+                            <div className="w-14 h-20 border-2 border-[#8d6e63] opacity-20"></div>
+                        </div>
+
+                        {/* Count Badge */}
+                        <div className={`absolute -top-3 -right-3 ${is101Mode ? 'bg-red-600' : 'bg-red-600'} text-white font-bold text-xs w-6 h-6 rounded-full flex items-center justify-center shadow-lg border border-white`}>
+                            {gameState.centerCount}
+                        </div>
                     </div>
 
-                    {/* Count Badge */}
-                    <div className={`absolute -top-3 -right-3 ${is101Mode ? 'bg-red-600' : 'bg-red-600'} text-white font-bold text-xs w-6 h-6 rounded-full flex items-center justify-center shadow-lg border border-white`}>
-                        {gameState.centerCount}
+                    {/* INDICATOR (Center Right) */}
+                    <div className="absolute left-[60%] top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center group">
+                        <div className="flex flex-col items-center">
+                            <Tile {...gameState.indicator} size="md" className="rotate-3 shadow-2xl group-hover:rotate-0 transition-transform duration-500" />
+                        </div>
                     </div>
-                </div>
-
-                {/* INDICATOR (Center Right) */}
-                <div className="absolute left-[60%] top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center group">
-                    <div className="flex flex-col items-center">
-                        <Tile {...gameState.indicator} size="md" className="rotate-3 shadow-2xl group-hover:rotate-0 transition-transform duration-500" />
-                    </div>
-                </div>
 
 
 
-                {/* --- DISCARDS (Dynamic Layout) --- */}
+                    {/* --- DISCARDS (Dynamic Layout) --- */}
 
-                {/* 1. LEFT ZONE (Draw Source) - Always visible (My Left) */}
-                {/* In 2-player: This is Opponent's discard (Index: me-1) */}
-                {/* In 4-player: This is Left Player's discard (Index: me-1) */}
-                <div className={`absolute left-4 flex flex-col items-center group transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
-                    <div className="text-[10px] text-white/30 font-bold mb-1 uppercase tracking-tighter italic">SOL TARAF (AL)</div>
-                    <div className="w-14 h-20 flex items-center justify-center relative">
-                        {gameState.players[(myIndex - 1 + gameState.players.length) % gameState.players.length]?.discards.length > 0 ? (
-                            <div
-                                className={`relative group transition-all duration-300 ${isMyTurn && gameState.players[myIndex].hand.length < 15 ? 'hover:scale-110 active:scale-95 cursor-pointer' : ''}`}
-                                onClick={isMyTurn && gameState.players[myIndex].hand.length < 15 ? handleDrawLeft : undefined}
-                            >
-                                <div className={`transition-all duration-300 ${isMyTurn && gameState.players[myIndex].hand.length < 15 ? (is101Mode ? 'ring-4 ring-red-500 shadow-[0_0_30px_red] rounded' : 'ring-4 ring-blue-500 shadow-[0_0_30px_blue] rounded') : ''}`}>
-                                    <Tile
-                                        {...gameState.players[(myIndex - 1 + gameState.players.length) % gameState.players.length].discards.slice(-1)[0]}
-                                        size="md"
-                                        className="shadow-lg"
-                                    />
-                                </div>
-                                {isMyTurn && (
-                                    <div className={`absolute -top-12 left-1/2 -translate-x-1/2 ${is101Mode ? 'bg-red-600' : 'bg-blue-600'} text-white text-[10px] font-bold px-3 py-1 rounded-full whitespace-nowrap shadow-xl border border-white/20 transition-all duration-500 animate-bounce ${showSideHint ? 'opacity-100' : 'opacity-0'}`}>
-                                        BURADAN AL
+                    {/* 1. LEFT ZONE (Draw Source) - Always visible (My Left) */}
+                    {/* In 2-player: This is Opponent's discard (Index: me-1) */}
+                    {/* In 4-player: This is Left Player's discard (Index: me-1) */}
+                    <div className={`absolute left-4 flex flex-col items-center group transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
+                        <div className="text-[10px] text-white/30 font-bold mb-1 uppercase tracking-tighter italic">SOL TARAF (AL)</div>
+                        <div className="w-14 h-20 flex items-center justify-center relative">
+                            {gameState.players[(myIndex - 1 + gameState.players.length) % gameState.players.length]?.discards.length > 0 ? (
+                                <div
+                                    className={`relative group transition-all duration-300 ${isMyTurn && gameState.players[myIndex].hand.length < 15 ? 'hover:scale-110 active:scale-95 cursor-pointer' : ''}`}
+                                    onClick={isMyTurn && gameState.players[myIndex].hand.length < 15 ? handleDrawLeft : undefined}
+                                >
+                                    <div className={`transition-all duration-300 ${isMyTurn && gameState.players[myIndex].hand.length < 15 ? (is101Mode ? 'ring-4 ring-red-500 shadow-[0_0_30px_red] rounded' : 'ring-4 ring-blue-500 shadow-[0_0_30px_blue] rounded') : ''}`}>
+                                        <Tile
+                                            {...gameState.players[(myIndex - 1 + gameState.players.length) % gameState.players.length].discards.slice(-1)[0]}
+                                            size="md"
+                                            className="shadow-lg"
+                                        />
                                     </div>
-                                )}
-                            </div>
-                        ) : (
-                            <div className="w-14 h-20 border-2 border-dashed border-white/5 rounded-sm flex items-center justify-center text-white/5 text-[8px] font-bold uppercase tracking-widest bg-black/5">BOŞ</div>
-                        )}
+                                    {isMyTurn && (
+                                        <div className={`absolute -top-12 left-1/2 -translate-x-1/2 ${is101Mode ? 'bg-red-600' : 'bg-blue-600'} text-white text-[10px] font-bold px-3 py-1 rounded-full whitespace-nowrap shadow-xl border border-white/20 transition-all duration-500 animate-bounce ${showSideHint ? 'opacity-100' : 'opacity-0'}`}>
+                                            BURADAN AL
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="w-14 h-20 border-2 border-dashed border-white/5 rounded-sm flex items-center justify-center text-white/5 text-[8px] font-bold uppercase tracking-widest bg-black/5">BOŞ</div>
+                            )}
+                        </div>
                     </div>
+
+                    {/* 2. RIGHT ZONE (My Target) - Always visible (My Right) */}
+                    <div className={`absolute right-4 flex flex-col items-center transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
+                        <div className="text-[10px] text-white/30 font-bold mb-1 uppercase tracking-tighter italic">SAĞ TARAF (AT)</div>
+                        <div className="w-14 h-20 flex items-center justify-center relative">
+                            {isMyTurn && <DiscardDroppable />}
+                            {gameState.players[myIndex].discards.length > 0 ? (
+                                <Tile
+                                    {...gameState.players[myIndex].discards[gameState.players[myIndex].discards.length - 1]}
+                                    size="md"
+                                    className="shadow-lg opacity-80"
+                                />
+                            ) : (
+                                <div className="w-14 h-20 border-2 border-dashed border-white/10 rounded-sm flex items-center justify-center text-white/10 text-[8px] font-bold uppercase tracking-widest bg-black/5">ATILAN</div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 3. OTHER ZONES - Only for 4 Players */}
+                    {gameState.players.length === 4 && (
+                        <>
+                            {/* RIGHT PLAYER DISCARD - Top Right */}
+                            <div className="absolute right-4 top-4 flex flex-col items-center opacity-40 hover:opacity-100 transition-opacity">
+                                <div className="w-14 h-20 flex items-center justify-center relative">
+                                    {gameState.players[(myIndex + 1) % gameState.players.length]?.discards.length > 0 ? (
+                                        <Tile
+                                            {...gameState.players[(myIndex + 1) % gameState.players.length].discards.slice(-1)[0]}
+                                            size="md"
+                                            className="shadow-md"
+                                        />
+                                    ) : (
+                                        <div className="w-14 h-20 border border-white/5 rounded-sm bg-black/10"></div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* TOP PLAYER DISCARD - Top Left */}
+                            <div className="absolute left-4 top-4 flex flex-col items-center opacity-40 hover:opacity-100 transition-opacity">
+                                <div className="w-14 h-20 flex items-center justify-center relative">
+                                    {gameState.players[(myIndex + 2) % gameState.players.length]?.discards.length > 0 ? (
+                                        <Tile
+                                            {...gameState.players[(myIndex + 2) % gameState.players.length].discards.slice(-1)[0]}
+                                            size="md"
+                                            className="shadow-md"
+                                        />
+                                    ) : (
+                                        <div className="w-14 h-20 border border-white/5 rounded-sm bg-black/10"></div>
+                                    )}
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
 
-                {/* 2. RIGHT ZONE (My Target) - Always visible (My Right) */}
-                <div className={`absolute right-4 flex flex-col items-center transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
-                    <div className="text-[10px] text-white/30 font-bold mb-1 uppercase tracking-tighter italic">SAĞ TARAF (AT)</div>
-                    <div className="w-14 h-20 flex items-center justify-center relative">
-                        {isMyTurn && <DiscardDroppable />}
-                        {gameState.players[myIndex].discards.length > 0 ? (
-                            <Tile
-                                {...gameState.players[myIndex].discards[gameState.players[myIndex].discards.length - 1]}
-                                size="md"
-                                className="shadow-lg opacity-80"
-                            />
-                        ) : (
-                            <div className="w-14 h-20 border-2 border-dashed border-white/10 rounded-sm flex items-center justify-center text-white/10 text-[8px] font-bold uppercase tracking-widest bg-black/5">ATILAN</div>
-                        )}
-                    </div>
-                </div>
-
-                {/* 3. OTHER ZONES - Only for 4 Players */}
-                {gameState.players.length === 4 && (
-                    <>
-                        {/* RIGHT PLAYER DISCARD - Top Right */}
-                        <div className="absolute right-4 top-4 flex flex-col items-center opacity-40 hover:opacity-100 transition-opacity">
-                            <div className="w-14 h-20 flex items-center justify-center relative">
-                                {gameState.players[(myIndex + 1) % gameState.players.length]?.discards.length > 0 ? (
-                                    <Tile
-                                        {...gameState.players[(myIndex + 1) % gameState.players.length].discards.slice(-1)[0]}
-                                        size="md"
-                                        className="shadow-md"
-                                    />
-                                ) : (
-                                    <div className="w-14 h-20 border border-white/5 rounded-sm bg-black/10"></div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* TOP PLAYER DISCARD - Top Left */}
-                        <div className="absolute left-4 top-4 flex flex-col items-center opacity-40 hover:opacity-100 transition-opacity">
-                            <div className="w-14 h-20 flex items-center justify-center relative">
-                                {gameState.players[(myIndex + 2) % gameState.players.length]?.discards.length > 0 ? (
-                                    <Tile
-                                        {...gameState.players[(myIndex + 2) % gameState.players.length].discards.slice(-1)[0]}
-                                        size="md"
-                                        className="shadow-md"
-                                    />
-                                ) : (
-                                    <div className="w-14 h-20 border border-white/5 rounded-sm bg-black/10"></div>
-                                )}
-                            </div>
-                        </div>
-                    </>
-                )}
-            </div>
-
-            {/* --- MY RACK (Main Interaction) --- */}
-            <div className="absolute bottom-0 left-0 w-full h-[250px] flex justify-center items-end pb-0 z-30 perspective-1000">
-                {!isSpectator ? (
-                    <div className={`
+                {/* --- MY RACK (Main Interaction) --- */}
+                <div className="absolute bottom-0 left-0 w-full h-[250px] flex justify-center items-end pb-0 z-30 perspective-1000">
+                    {!isSpectator ? (
+                        <div className={`
                         relative bg-[#3e2723] w-full max-w-[95%] md:max-w-[1100px] h-[160px] rounded-t-lg shadow-[0_-20px_60px_rgba(0,0,0,0.8)] border-t-[8px] border-[#5d4037] flex items-center justify-center pb-4 transform rotateX(5deg) origin-bottom transition-all duration-300 hover:rotateX(0deg)
                         ${isMyTurn ? 'ring-4 ring-yellow-400 shadow-[0_-20px_80px_rgba(255,215,0,0.4)]' : ''}
                         ${isArranging ? 'animate-[rackPulse_0.5s_ease-in-out]' : ''}
                     `}>
-                        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-30 mix-blend-overlay pointer-events-none"></div>
+                            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-30 mix-blend-overlay pointer-events-none"></div>
 
-                        {/* Auto-Arrange Button */}
-                        <button
-                            onClick={handleAutoArrange}
-                            title="Otomatik Diz (Per)"
-                            className={`absolute -top-14 right-4 ${is101Mode ? 'bg-red-600/80 hover:bg-red-500 shadow-[0_0_20px_rgba(220,38,38,0.4)]' : 'bg-yellow-500/80 hover:bg-yellow-400 shadow-[0_0_20px_rgba(255,215,0,0.4)]'} text-white w-12 h-12 rounded-full flex items-center justify-center text-2xl backdrop-blur border border-white/20 transition-all hover:scale-110 active:scale-90 z-[60]`}
-                        >
-                            💡
-                        </button>
+                            {/* Auto-Arrange Button */}
+                            <button
+                                onClick={handleAutoArrange}
+                                title="Otomatik Diz (Per)"
+                                className={`absolute -top-14 right-4 ${is101Mode ? 'bg-red-600/80 hover:bg-red-500 shadow-[0_0_20px_rgba(220,38,38,0.4)]' : 'bg-yellow-500/80 hover:bg-yellow-400 shadow-[0_0_20px_rgba(255,215,0,0.4)]'} text-white w-12 h-12 rounded-full flex items-center justify-center text-2xl backdrop-blur border border-white/20 transition-all hover:scale-110 active:scale-90 z-[60]`}
+                            >
+                                💡
+                            </button>
 
-                        <DndContext
-                            sensors={sensors}
-                            collisionDetection={closestCenter}
-                            onDragStart={handleDragStart}
-                            onDragEnd={handleDragEnd}
-                        >
-                            {isMyTurn && (
-                                <div
-                                    id="discard-zone-container"
-                                    className="absolute -top-[500px] right-[5%] w-64 h-80 border-4 border-dashed border-red-500/30 rounded-3xl bg-red-500/5 flex flex-col items-center justify-center z-50 transition-all hover:bg-red-500/20 hover:scale-105 hover:border-red-500 group animate-pulse"
-                                >
-                                    <div className="text-red-300 font-black text-6xl mb-4 group-hover:scale-125 transition-transform duration-300">🗑️</div>
-                                    <div className="text-red-200 font-black text-center text-xl tracking-widest">TAŞI AT</div>
-                                    <DiscardDroppable />
+                            <DndContext
+                                sensors={sensors}
+                                collisionDetection={closestCenter}
+                                onDragStart={handleDragStart}
+                                onDragEnd={handleDragEnd}
+                            >
+                                {isMyTurn && (
+                                    <div
+                                        id="discard-zone-container"
+                                        className="absolute -top-[500px] right-[5%] w-64 h-80 border-4 border-dashed border-red-500/30 rounded-3xl bg-red-500/5 flex flex-col items-center justify-center z-50 transition-all hover:bg-red-500/20 hover:scale-105 hover:border-red-500 group animate-pulse"
+                                    >
+                                        <div className="text-red-300 font-black text-6xl mb-4 group-hover:scale-125 transition-transform duration-300">🗑️</div>
+                                        <div className="text-red-200 font-black text-center text-xl tracking-widest">TAŞI AT</div>
+                                        <DiscardDroppable />
+                                    </div>
+                                )}
+
+                                <div className="grid grid-rows-2 grid-cols-15 gap-x-3 gap-y-2 px-6 relative">
+                                    {/* Finish Zone on the Right */}
+                                    <FinishZone isMyTurn={isMyTurn} gameMode={gameMode} />
+
+                                    {rackSlots.map((tile, i) => (
+                                        <DroppableSlot key={i} id={`slot-${i}`}>
+                                            {tile ? (
+                                                <div className="animate-[tilePop_0.3s_ease-out_forwards]">
+                                                    <DraggableTile
+                                                        tile={tile}
+                                                        isMyTurn={isMyTurn}
+                                                        onDiscard={handleDiscard}
+                                                        isOkey={gameState.okeyTile && tile.color === gameState.okeyTile.color && tile.value === gameState.okeyTile.value}
+                                                        onFlip={handleFlipTile}
+                                                        isFlipped={flipAnimationIds.has(tile.id)}
+                                                        hasBeenFlipped={flippedTileIds.has(tile.id)}
+                                                    />
+                                                </div>
+                                            ) : null}
+                                        </DroppableSlot>
+                                    ))}
                                 </div>
-                            )}
-
-                            <div className="grid grid-rows-2 grid-cols-15 gap-x-3 gap-y-2 px-6 relative">
-                                {/* Finish Zone on the Right */}
-                                <FinishZone isMyTurn={isMyTurn} gameMode={gameMode} />
-
-                                {rackSlots.map((tile, i) => (
-                                    <DroppableSlot key={i} id={`slot-${i}`}>
-                                        {tile ? (
-                                            <div className="animate-[tilePop_0.3s_ease-out_forwards]">
-                                                <DraggableTile
-                                                    tile={tile}
-                                                    isMyTurn={isMyTurn}
-                                                    onDiscard={handleDiscard}
-                                                    isOkey={gameState.okeyTile && tile.color === gameState.okeyTile.color && tile.value === gameState.okeyTile.value}
-                                                    onFlip={handleFlipTile}
-                                                    isFlipped={flipAnimationIds.has(tile.id)}
-                                                    hasBeenFlipped={flippedTileIds.has(tile.id)}
-                                                />
-                                            </div>
-                                        ) : null}
-                                    </DroppableSlot>
-                                ))}
-                            </div>
-                        </DndContext>
-                    </div>
-                ) : (
-                    <div className="relative bg-[#1a1a2e]/60 w-full max-w-[950px] h-[160px] rounded-t-3xl border-t-2 border-x-2 border-blue-500/30 flex flex-col items-center justify-center backdrop-blur-xl shadow-[0_-20px_50px_rgba(59,130,246,0.2)] animate-pulse">
-                        <div className="text-4xl mb-2">👁️</div>
-                        <div className="text-blue-400 font-black text-2xl tracking-widest uppercase">{t("spectating") || "İZLİYORSUNUZ"}</div>
-                        <div className="text-blue-400/40 text-[10px] font-bold mt-1">Sadece izleme modu • Müdahele edilemez</div>
-                    </div>
-                )}
-            </div>
+                            </DndContext>
+                        </div>
+                    ) : (
+                        <div className="relative bg-[#1a1a2e]/60 w-full max-w-[950px] h-[160px] rounded-t-3xl border-t-2 border-x-2 border-blue-500/30 flex flex-col items-center justify-center backdrop-blur-xl shadow-[0_-20px_50px_rgba(59,130,246,0.2)] animate-pulse">
+                            <div className="text-4xl mb-2">👁️</div>
+                            <div className="text-blue-400 font-black text-2xl tracking-widest uppercase">{t("spectating") || "İZLİYORSUNUZ"}</div>
+                            <div className="text-blue-400/40 text-[10px] font-bold mt-1">Sadece izleme modu • Müdahele edilemez</div>
+                        </div>
+                    )}
+                </div>
+            </motion.div>
         </div>
     );
 };

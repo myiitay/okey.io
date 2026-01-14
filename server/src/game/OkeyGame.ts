@@ -189,7 +189,13 @@ export class OkeyGame {
     private drawFromCenter(playerIndex: number) {
         if (this.players[playerIndex].hand.length !== 14) throw new Error("Already drew or have too many tiles");
         const tile = this.deck.pop();
-        if (!tile) throw new Error("Deck empty"); // Should handle reshuffle in full game
+        if (!tile) {
+            // Deck is empty - Draw condition
+            console.log(`[OkeyGame] Deck exhausted. Game ends in a draw.`);
+            this.status = 'FINISHED';
+            this.onStateChange(this.getGameState());
+            return;
+        }
         this.players[playerIndex].hand.push(tile);
         this.onStateChange(this.getGameState());
     }

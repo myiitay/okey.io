@@ -22,6 +22,11 @@ export const dictionary: Record<string, Record<Language, string>> = {
     "or": { tr: "VEYA", en: "OR" },
     "join_room": { tr: "ODAYA KATIL", en: "JOIN ROOM" },
     "online_status": { tr: "Çevrimiçi", en: "Online" },
+    "select_theme": { tr: "TEMA SEÇ", en: "SELECT THEME" },
+    "theme_royal": { tr: "Asil Gece", en: "Royal Night" },
+    "theme_emerald": { tr: "Zümrüt Masa", en: "Emerald Table" },
+    "theme_noir": { tr: "Siyah İnci", en: "Black Pearl" },
+    "theme_wood": { tr: "Klasik Ahşap", en: "Classic Wood" },
 
     // Waiting Room
     "waiting_room": { tr: "BEKLEME ODASI", en: "WAITING ROOM" },
@@ -50,6 +55,30 @@ export const dictionary: Record<string, Record<Language, string>> = {
     "connecting": { tr: "Bağlanıyor...", en: "Connecting..." },
     "leave_confirm": { tr: "Oyundan ayrılmak istediğine emin misin?", en: "Are you sure you want to leave the game?" },
     "lang_code": { tr: "tr", en: "en" },
+
+    // New Waiting Room Features
+    "ready": { tr: "HAZIR", en: "READY" },
+    "unready": { tr: "BEKLE", en: "WAIT" },
+    "settings": { tr: "ODA AYARLARI", en: "ROOM SETTINGS" },
+    "turn_time": { tr: "Sıra Süresi", en: "Turn Time" },
+    "target_score": { tr: "Bitiş Puanı", en: "Target Score" },
+    "seconds": { tr: "sn", en: "sec" },
+    "everyone_ready_warning": { tr: "Herkesin hazır olması bekleniyor!", en: "Waiting for everyone to be ready!" },
+    "kick": { tr: "At", en: "Kick" },
+    "kick_confirm": { tr: "Bu oyuncuyu odadan atmak istediğine emin misin?", en: "Are you sure you want to kick this player?" },
+
+    // Emotes
+    "emote_fire": { tr: "Yanıyorsun! 🔥", en: "You're on fire! 🔥" },
+    "emote_cool": { tr: "Rahat ol 😎", en: "Stay cool 😎" },
+    "emote_think": { tr: "Düşünüyorum... 🤔", en: "Thinking... 🤔" },
+    "emote_wave": { tr: "Merhaba 👋", en: "Hello 👋" },
+    "emote_dice": { tr: "Şansına 🎲", en: "Good luck 🎲" },
+    "emote_laugh": { tr: "Hahaha 😂", en: "Hahaha 😂" },
+    "emote_luck": { tr: "Bol Şans 🍀", en: "Good Luck 🍀" },
+    "emote_sad": { tr: "Üzgünüm 😢", en: "Sorry 😢" },
+    "emote_clap": { tr: "Tebrikler 👏", en: "Congrats 👏" },
+
+    "invalid_hand_size": { tr: "Finish için bitiş taşına ihtiyacınız var!", en: "You need a finish tile to finish!" },
 };
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

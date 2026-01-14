@@ -17,8 +17,9 @@ export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
     onRestartVote,
     onLeave
 }) => {
-    const winner = gameState.players.find((p: any) => p.id === gameState.winnerId);
-    const isMe = winner?.id === currentUser?.id;
+    const isDraw = !gameState.winnerId;
+    const winner = !isDraw ? gameState.players.find((p: any) => p.id === gameState.winnerId) : null;
+    const isMe = !isDraw && winner?.id === currentUser?.id;
     const is101Mode = roomData?.gameMode === '101';
 
     // Restart state from roomData
@@ -47,7 +48,23 @@ export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
                     <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none bg-[url('/confetti.gif')] bg-cover"></div>
 
                     <div className="relative z-10">
-                        {isMe ? (
+                        {isDraw ? (
+                            <>
+                                <motion.div
+                                    animate={{ y: [0, -10, 0] }}
+                                    transition={{ duration: 2, repeat: Infinity }}
+                                    className="text-8xl mb-6 filter drop-shadow-[0_0_20px_rgba(255,255,255,0.3)]"
+                                >
+                                    🤝
+                                </motion.div>
+                                <h2 className="text-6xl font-black bg-gradient-to-r from-blue-300 via-white to-blue-300 bg-clip-text text-transparent mb-4 tracking-tight">
+                                    BERABERE!
+                                </h2>
+                                <p className="text-white/60 text-xl font-medium mb-12">
+                                    Bütün taşlar bitti, kazanan çıkmadı.
+                                </p>
+                            </>
+                        ) : isMe ? (
                             <>
                                 <motion.div
                                     animate={{ rotate: [0, 10, -10, 0], scale: [1, 1.2, 1] }}
