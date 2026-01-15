@@ -59,6 +59,7 @@ export const dictionary: Record<string, Record<Language, string>> = {
     // New Waiting Room Features
     "ready": { tr: "HAZIR", en: "READY" },
     "unready": { tr: "BEKLE", en: "WAIT" },
+    "ready_count": { tr: "Hazır", en: "Ready" },
     "settings": { tr: "ODA AYARLARI", en: "ROOM SETTINGS" },
     "turn_time": { tr: "Sıra Süresi", en: "Turn Time" },
     "target_score": { tr: "Bitiş Puanı", en: "Target Score" },

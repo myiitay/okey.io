@@ -403,11 +403,9 @@ export default function RoomPage() {
                             <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                 👥 {t("players")} <span className="bg-white/10 px-2 py-0.5 rounded text-sm text-white/60">{roomData.players.length}/4</span>
                             </h2>
-                            {roomData.players.length < 4 && (
-                                <div className="text-xs text-yellow-400/80 font-medium animate-pulse">
-                                    {t("waiting_players")}
-                                </div>
-                            )}
+                            <div className="text-xs text-yellow-400 font-bold bg-yellow-400/10 px-3 py-1 rounded-full animate-pulse border border-yellow-400/20">
+                                {roomData.players.filter(p => p.isReady || p.isBot || roomData.players[0].id === p.id).length}/{roomData.players.length} {t("ready_count") || "Hazır"}
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-1 gap-3 flex-1 content-start">
@@ -459,10 +457,10 @@ export default function RoomPage() {
                                                 )}
                                             </AnimatePresence>
                                             {/* Ready Status */}
-                                            <div className={`flex items-center gap-1.5 mt-1`}>
-                                                <div className={`w-2 h-2 rounded-full ${player.isReady ? 'bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]' : 'bg-gray-600'}`}></div>
-                                                <span className={`text-[10px] font-black uppercase tracking-widest ${player.isReady ? 'text-green-400' : 'text-gray-500'}`}>
-                                                    {player.isReady ? t("ready") : t("waiting_players")}
+                                            <div className="flex items-center gap-1.5 mt-1">
+                                                <div className={`w-2 h-2 rounded-full ${(player.isReady || player.isBot || index === 0) ? 'bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]' : 'bg-gray-600'}`}></div>
+                                                <span className={`text-[10px] font-black uppercase tracking-widest ${(player.isReady || player.isBot || index === 0) ? 'text-green-400' : 'text-gray-500'}`}>
+                                                    {(player.isReady || player.isBot || index === 0) ? t("ready") : t("unready")}
                                                 </span>
                                             </div>
                                         </div>
@@ -512,9 +510,9 @@ export default function RoomPage() {
                         {!isHost && (
                             <button
                                 onClick={handleToggleReady}
-                                className={`flex-1 py-5 rounded-[1.5rem] font-black text-xl transition-all border-b-8 shadow-xl active:border-b-0 active:translate-y-2 ${roomData.players.find(p => p.id === socket.id)?.isReady ? 'bg-green-500 text-white border-green-700' : 'bg-gray-700 text-gray-400 border-gray-900'}`}
+                                className={`flex-1 py-5 rounded-[1.5rem] font-black text-xl transition-all border-b-8 shadow-xl active:border-b-0 active:translate-y-2 ${roomData.players.find(p => p.id === socket.id)?.isReady ? 'bg-orange-500 text-white border-orange-700' : 'bg-green-500 text-white border-green-700'}`}
                             >
-                                {roomData.players.find(p => p.id === socket.id)?.isReady ? t("ready") : t("unready")}
+                                {roomData.players.find(p => p.id === socket.id)?.isReady ? t("unready") : t("ready")}
                             </button>
                         )}
 
