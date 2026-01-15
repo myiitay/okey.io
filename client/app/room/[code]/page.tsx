@@ -275,15 +275,12 @@ export default function RoomPage() {
             {/* Quick Emotes Panel */}
             <div className="absolute bottom-6 left-6 z-50 flex gap-2 flex-wrap max-w-[50vw]">
                 {[
-                    { key: "emote_fire", icon: "🔥" },
-                    { key: "emote_cool", icon: "😎" },
-                    { key: "emote_think", icon: "🤔" },
-                    { key: "emote_wave", icon: "👋" },
-                    { key: "emote_dice", icon: "🎲" },
-                    { key: "emote_laugh", icon: "😂" },
-                    { key: "emote_luck", icon: "🍀" }, // Added luck
-                    { key: "emote_sad", icon: "😢" },   // Added sad
-                    { key: "emote_clap", icon: "👏" }   // Added clap
+                    { key: "emote_selam", icon: "👋" },
+                    { key: "emote_luck", icon: "🍀" },
+                    { key: "emote_congrats", icon: "👏" },
+                    { key: "emote_thanks", icon: "🙏" },
+                    { key: "emote_hurry", icon: "⚡" },
+                    { key: "emote_hand", icon: "🃏" }
                 ].map((item) => (
                     <button
                         key={item.key}
@@ -446,9 +443,8 @@ export default function RoomPage() {
                                                             {(() => {
                                                                 const icon = emotes.find(e => e.playerId === player.id)?.emote;
                                                                 const map: Record<string, string> = {
-                                                                    "🔥": "emote_fire", "😎": "emote_cool", "🤔": "emote_think",
-                                                                    "👋": "emote_wave", "🎲": "emote_dice", "😂": "emote_laugh",
-                                                                    "🍀": "emote_luck", "😢": "emote_sad", "👏": "emote_clap"
+                                                                    "👋": "emote_selam", "🍀": "emote_luck", "👏": "emote_congrats",
+                                                                    "🙏": "emote_thanks", "⚡": "emote_hurry", "🃏": "emote_hand"
                                                                 };
                                                                 return t(map[icon as string] || "");
                                                             })()}

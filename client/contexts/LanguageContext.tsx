@@ -69,15 +69,12 @@ export const dictionary: Record<string, Record<Language, string>> = {
     "kick_confirm": { tr: "Bu oyuncuyu odadan atmak istediğine emin misin?", en: "Are you sure you want to kick this player?" },
 
     // Emotes
-    "emote_fire": { tr: "Yanıyorsun! 🔥", en: "You're on fire! 🔥" },
-    "emote_cool": { tr: "Rahat ol 😎", en: "Stay cool 😎" },
-    "emote_think": { tr: "Düşünüyorum... 🤔", en: "Thinking... 🤔" },
-    "emote_wave": { tr: "Merhaba 👋", en: "Hello 👋" },
-    "emote_dice": { tr: "Şansına 🎲", en: "Good luck 🎲" },
-    "emote_laugh": { tr: "Hahaha 😂", en: "Hahaha 😂" },
-    "emote_luck": { tr: "Bol Şans 🍀", en: "Good Luck 🍀" },
-    "emote_sad": { tr: "Üzgünüm 😢", en: "Sorry 😢" },
-    "emote_clap": { tr: "Tebrikler 👏", en: "Congrats 👏" },
+    "emote_selam": { tr: "Selamlar 👋", en: "Greetings 👋" },
+    "emote_luck": { tr: "Bol Şanslar! 🍀", en: "Good Luck! 🍀" },
+    "emote_congrats": { tr: "Tebrikler! 👏", en: "Congrats! 👏" },
+    "emote_thanks": { tr: "Teşekkürler 🙏", en: "Thanks 🙏" },
+    "emote_hurry": { tr: "Seri Lütfen! ⚡", en: "Hurry up! ⚡" },
+    "emote_hand": { tr: "El Nasıl? 🃏", en: "How is the hand? 🃏" },
 
     "invalid_hand_size": { tr: "Finish için bitiş taşına ihtiyacınız var!", en: "You need a finish tile to finish!" },
     "return_home": { tr: "ANA SAYFAYA DÖN", en: "RETURN HOME" },
