@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import { TileData } from '../../types/game';
+import { TileData } from './types';
 import { soundManager } from '../../utils/soundManager';
 
 
@@ -11,8 +11,17 @@ import { soundManager } from '../../utils/soundManager';
 // Looking at GameBoard, Tile is a component. I should extract Tile first or co-locate it.
 // Let's create `Tile.tsx` and `DraggableTile.tsx`.
 
+interface TileProps {
+    color?: string;
+    value?: number;
+    size?: "sm" | "md" | "lg";
+    isBack?: boolean;
+    className?: string;
+    onClick?: (e?: React.MouseEvent) => void;
+}
+
 // Reusable Tile Component (Premium 3D Design)
-export const Tile = ({ color, value, size = "md", isBack = false, className = "", onClick }: any) => {
+export const Tile = ({ color = 'black', value = 0, size = "md", isBack = false, className = "", onClick }: TileProps) => {
     // Defines the "ink" color for the number and shape
     const getInkColor = (c: string) => {
         switch (c) {
@@ -195,3 +204,4 @@ export const DraggableTile = React.memo(({ tile, isMyTurn, onDiscard, isOkey = f
         </div>
     );
 });
+DraggableTile.displayName = 'DraggableTile';

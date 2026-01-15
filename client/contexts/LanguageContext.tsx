@@ -86,16 +86,21 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     useEffect(() => {
         // Auto-detect based on navigator
-        const browserLang = navigator.language.toLowerCase();
-        if (browserLang.startsWith('tr')) {
-            setLanguage('tr');
-        } else {
-            setLanguage('en');
+        let targetLang: Language = 'en';
+        if (typeof navigator !== 'undefined') {
+            const browserLang = navigator.language.toLowerCase();
+            if (browserLang.startsWith('tr')) {
+                targetLang = 'tr';
+            }
         }
 
-        // Check localStorage? (Optional, if we want persistence)
+        // Check localStorage (Optional, if we want persistence)
         const saved = localStorage.getItem('okey_lang') as Language;
-        if (saved) setLanguage(saved);
+        if (saved) targetLang = saved;
+
+        // Only update if different
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLanguage((prev) => (prev !== targetLang ? targetLang : prev));
     }, []);
 
     const updateLanguage = (lang: Language) => {

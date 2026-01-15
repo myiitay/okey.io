@@ -7,6 +7,7 @@ export const SoundToggle: React.FC = () => {
     const [isEnabled, setIsEnabled] = useState(true);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setIsEnabled(soundManager.getEnabled());
     }, []);
 

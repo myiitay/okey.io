@@ -217,6 +217,7 @@ function HomeContent() {
             animationDelay: `${i * 0.5}s`,
             transform: `rotate(${i * 15}deg)`
         }));
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setTileStyles(styles);
     }, []);
 

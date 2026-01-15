@@ -46,10 +46,11 @@ export const OpponentRack = React.memo(({ player, isDisconnected = false, positi
                         top: '50%',
                         left: '50%',
                         animation: `scatter-${i % 4} 1.5s forwards ease-out`,
-                        animationDelay: `${Math.random() * 0.2}s`
+                        animationDelay: `${(i * 0.05)}s`
                     }}
                 />
             ))}
         </div>
     );
 });
+OpponentRack.displayName = 'OpponentRack';

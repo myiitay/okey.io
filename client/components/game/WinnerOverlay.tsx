@@ -1,13 +1,15 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { GameState, RoomData } from './types';
+
 interface WinnerOverlayProps {
-    gameState: any; // Type strictly if possible
-    currentUser: any;
-    roomData: any;
+    gameState: GameState;
+    currentUser: { id: string; name: string };
+    roomData: RoomData;
     onRestartVote: () => void;
     onLeave: () => void;
-    className?: string; // Allow passing styles
+    className?: string;
 }
 
 export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
@@ -18,7 +20,7 @@ export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
     onLeave
 }) => {
     const isDraw = !gameState.winnerId;
-    const winner = !isDraw ? gameState.players.find((p: any) => p.id === gameState.winnerId) : null;
+    const winner = !isDraw ? roomData.players.find((p) => p.id === gameState.winnerId) : null;
     const isMe = !isDraw && winner?.id === currentUser?.id;
     const is101Mode = roomData?.gameMode === '101';
 
@@ -27,7 +29,7 @@ export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
     const voteCount = roomData?.restartCount || 0;
     const totalPlayers = playersList.length;
 
-    const myPlayerState = playersList.find((p: any) => p.id === currentUser.id);
+    const myPlayerState = playersList.find((p) => p.id === currentUser.id);
     const iVoted = myPlayerState?.readyToRestart;
 
     return (

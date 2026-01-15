@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/utils/socket";
 import { GameBoard } from "@/components/GameBoard";
@@ -8,31 +8,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { soundManager } from "@/utils/soundManager";
 import { motion, AnimatePresence } from "framer-motion";
 
-interface Player {
-    id: string;
-    name: string;
-    avatar: string;
-    readyToRestart?: boolean;
-    isReady?: boolean;
-    isBot?: boolean;
-    connected?: boolean;
-}
-
-interface RoomSettings {
-    turnTime: number;
-    targetScore: number;
-    isPublic: boolean;
-}
-
-interface RoomData {
-    id: string;
-    players: Player[];
-    winScores: Record<string, number>;
-    restartCount: number;
-    gameStarted: boolean;
-    gameMode?: '101' | 'standard';
-    settings?: RoomSettings;
-}
+import { RoomData, GameState, TileData, RoomSettings } from "@/components/game/types";
 
 export default function RoomPage() {
     const { code } = useParams();
@@ -43,9 +19,9 @@ export default function RoomPage() {
     const router = useRouter();
     const { t } = useLanguage();
 
-    const [countdown, setCountdown] = useState<number | null>(null);
     const [isStarting, setIsStarting] = useState(false);
-    const [initialGameState, setInitialGameState] = useState<any>(null);
+    const [initialGameState, setInitialGameState] = useState<GameState | null>(null);
+    const [isFreshStart, setIsFreshStart] = useState(false); // Track if this is a fresh start for animations
     const [emotes, setEmotes] = useState<{ id: number, playerId: string, emote: string, text?: string }[]>([]);
 
     useEffect(() => {
@@ -85,33 +61,12 @@ export default function RoomPage() {
             setRoomData(data);
         });
 
-        socket.on("roomCountdown", (count: number) => {
-            setCountdown(count);
-            setIsStarting(true);
-
-            // Play start sound 3 times with 1s intervals
-            soundManager.play('countdown_start');
-            setTimeout(() => soundManager.play('countdown_start'), 1000);
-            setTimeout(() => soundManager.play('countdown_start'), 2000);
-
-            const interval = setInterval(() => {
-                setCountdown(prev => {
-                    if (prev === null || prev <= 1) {
-                        clearInterval(interval);
-                        return null;
-                    }
-                    soundManager.play('countdown_tick');
-                    return prev - 1;
-                });
-            }, 1000);
-        });
-
-        socket.on("gameStarted", (gameState: any) => {
-            console.log("Game started received in RoomPage:", gameState);
+        socket.on("gameStarted", (gameState: GameState) => {
+            console.log("Game started:", gameState);
             setInitialGameState(gameState);
             setRoomData(prev => prev ? { ...prev, gameStarted: true } : null);
-            setCountdown(null);
             setIsStarting(false);
+            setIsFreshStart(true); // Enable intro animations
         });
 
         socket.on("kicked", (msg: string) => {
@@ -174,7 +129,6 @@ export default function RoomPage() {
             socket.off("banned");
             socket.off("autoTriggerStart");
             socket.off("emoteReceived");
-            socket.off("error");
         };
     }, [socket, router]);
 
@@ -287,6 +241,8 @@ export default function RoomPage() {
         <div className="animate-pulse tracking-widest">{t("connecting")}</div>
     </div>;
 
+
+
     if (roomData.gameStarted) {
         return (
             <GameBoard
@@ -295,19 +251,8 @@ export default function RoomPage() {
                 gameMode={roomData.gameMode}
                 isSpectator={isSpectator}
                 initialGameState={initialGameState}
+                isFreshStart={isFreshStart}
             />
-        );
-    }
-
-    // --- COUNTDOWN OVERLAY ---
-    if (countdown !== null) {
-        return (
-            <div className={`min-h-screen ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} flex items-center justify-center relative overflow-hidden font-sans z-50`}>
-                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 animate-pulse"></div>
-                <div className={`text-[15rem] font-black text-transparent bg-clip-text ${is101Mode ? 'bg-gradient-to-b from-red-400 to-red-700' : 'bg-gradient-to-b from-yellow-300 to-yellow-600'} animate-[ping_1s_ease-in-out_infinite] ${is101Mode ? 'drop-shadow-[0_0_50px_rgba(220,38,38,0.5)]' : 'drop-shadow-[0_0_50px_rgba(250,204,21,0.5)]'}`}>
-                    {countdown}
-                </div>
-            </div>
         );
     }
 
@@ -502,7 +447,7 @@ export default function RoomPage() {
                                                             {/* Reverse lookup text from icon - quick hack since we send icon */}
                                                             {(() => {
                                                                 const icon = emotes.find(e => e.playerId === player.id)?.emote;
-                                                                const map: any = {
+                                                                const map: Record<string, string> = {
                                                                     "🔥": "emote_fire", "😎": "emote_cool", "🤔": "emote_think",
                                                                     "👋": "emote_wave", "🎲": "emote_dice", "😂": "emote_laugh",
                                                                     "🍀": "emote_luck", "😢": "emote_sad", "👏": "emote_clap"

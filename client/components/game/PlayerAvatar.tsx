@@ -35,3 +35,4 @@ export const PlayerAvatar = React.memo(({ player, info, isDisconnected = false, 
         </div>
     );
 });
+PlayerAvatar.displayName = 'PlayerAvatar';

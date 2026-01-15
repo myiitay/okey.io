@@ -71,7 +71,7 @@ export const arrangeByGroups = (normalTiles: TileData[], okeyTiles: TileData[], 
     }
 
     // Flatten groups
-    let newHand: (TileData | null)[] = [];
+    const newHand: (TileData | null)[] = [];
     groups.forEach(g => {
         newHand.push(...g);
         newHand.push(null); // Separator

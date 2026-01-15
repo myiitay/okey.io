@@ -1,10 +1,12 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { RoomPlayer } from './types';
+
 interface LeaderboardProps {
     isOpen: boolean;
     onClose: () => void;
-    players: any[];
+    players: RoomPlayer[];
     winScores: Record<string, number>;
 }
 

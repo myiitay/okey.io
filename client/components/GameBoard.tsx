@@ -19,7 +19,7 @@ import {
 } from '@dnd-kit/core';
 import { useLanguage } from "@/contexts/LanguageContext";
 import { motion, AnimatePresence } from 'framer-motion';
-import { TileData, GameState } from './game/types';
+import { TileData, GameState, RoomData } from './game/types';
 import { arrangeByGroups, arrangeByColor, arrangeByValue, arrangeByPotential, getColorName, getRelativePlayer } from '../utils/gameLogics';
 // Imports for extracted components
 import { DraggableTile, Tile } from './game/DraggableTile';
@@ -39,6 +39,7 @@ interface GameBoardProps {
     gameMode?: '101' | 'standard';
     isSpectator?: boolean;
     initialGameState?: GameState | null;
+    isFreshStart?: boolean;
 }
 
 
@@ -49,10 +50,50 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     currentUser,
     gameMode,
     isSpectator = false,
-    initialGameState = null
+    initialGameState = null,
+    isFreshStart = false
 }) => {
     const is101Mode = gameMode === '101';
     const socket = getSocket();
+
+    // INTRO SEQUENCE STATE
+    const [introPhase, setIntroPhase] = useState<'none' | 'deal' | 'joker'>('none');
+    const [showIntroOverlay, setShowIntroOverlay] = useState(false);
+
+    // Initial Trigger for Intro
+    useEffect(() => {
+        if (isFreshStart && initialGameState) {
+            // START IMMEDIATELY with Dealing (Stream)
+            setIntroPhase('deal');
+            setShowIntroOverlay(true);
+            soundManager.play('dealing');
+        }
+    }, [isFreshStart, initialGameState]);
+
+    // Phase 1: Dealing (Stream Animation Duration)
+    useEffect(() => {
+        if (introPhase === 'deal') {
+            const timer = setTimeout(() => {
+                setIntroPhase('joker');
+                soundManager.play('joker_reveal');
+            }, 3500); // 3.5s ensures all burst particles finish
+            return () => clearTimeout(timer);
+        }
+    }, [introPhase]);
+
+    // Phase 2: Joker Reveal (Duration)
+    useEffect(() => {
+        if (introPhase === 'joker') {
+            const timer = setTimeout(() => {
+                setIntroPhase('none');
+                setShowIntroOverlay(false);
+                soundManager.play('game_start');
+            }, 3000); // 3 seconds to admire (slightly longer)
+            return () => clearTimeout(timer);
+        }
+    }, [introPhase]);
+
+
     const [gameState, setGameState] = useState<GameState | null>(initialGameState);
     const [playersMap, setPlayersMap] = useState<Record<string, { name: string, avatar: string }>>({});
     const [localHand, setLocalHand] = useState<TileData[]>(initialGameState?.players.find(p => p.id === currentUser.id)?.hand || []); // For Drag and Drop
@@ -62,7 +103,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             const myIdx = initialGameState.players.findIndex(p => p.id === currentUser.id);
             if (myIdx !== -1) {
                 const slots = Array(30).fill(null);
-                initialGameState.players[myIdx].hand.forEach((t: any, i: number) => { if (i < 30) slots[i] = t; });
+                initialGameState.players[myIdx].hand.forEach((t: TileData, i: number) => { if (i < 30) slots[i] = t; });
                 return slots;
             }
         }
@@ -89,10 +130,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     const [isDiscardAnimating, setIsDiscardAnimating] = useState(false);
     const [isArranging, setIsArranging] = useState(false);
     const [arrangeMode, setArrangeMode] = useState<'groups' | 'color' | 'value' | 'potential'>('groups');
-    const [roomData, setRoomData] = useState<any>(null);
+    const [roomData, setRoomData] = useState<RoomData | null>(null);
     const { t } = useLanguage();
-    const [isPlayingIntro, setIsPlayingIntro] = useState(!!initialGameState && initialGameState.status === 'PLAYING');
-    const [introStep, setIntroStep] = useState<'dealing' | 'revealing' | 'fading' | 'done'>(!!initialGameState && initialGameState.status === 'PLAYING' ? 'dealing' : 'done');
     const [disconnectedPlayers, setDisconnectedPlayers] = useState<Set<string>>(new Set());
     const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
 
@@ -114,7 +153,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         const myIdx = gameState.players.findIndex(p => p.id === currentUser.id);
         if (myIdx === -1) return;
 
-        const hasOkey = gameState.players[myIdx].hand.some((t: any) =>
+        const hasOkey = gameState.players[myIdx].hand.some((t) =>
             t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value
         );
 
@@ -127,16 +166,16 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     }, [gameState, currentUser.id]);
 
     useEffect(() => {
-        socket.on('updateRoom', (data: any) => {
+        socket.on('updateRoom', (data: RoomData) => {
             setRoomData(data);
             if (data.players) {
                 const pMap: Record<string, { name: string, avatar: string }> = {};
-                data.players.forEach((p: any) => { pMap[p.id] = { name: p.name, avatar: p.avatar }; });
+                data.players.forEach((p) => { pMap[p.id] = { name: p.name, avatar: p.avatar }; });
                 setPlayersMap(pMap);
 
                 // Sync disconnected players from room data
                 const disconnectedSet = new Set<string>();
-                data.players.forEach((p: any) => {
+                data.players.forEach((p) => {
                     if (p.connected === false) disconnectedSet.add(p.id);
                 });
                 setDisconnectedPlayers(disconnectedSet);
@@ -167,16 +206,16 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
                 setRackSlots(prev => {
                     const currentTiles = prev.filter(t => t !== null) as TileData[];
-                    const serverIds = new Set(serverHand.map((t: any) => t.id));
+                    const serverIds = new Set(serverHand.map((t) => t.id));
                     const currentIds = new Set(currentTiles.map(t => t.id));
 
-                    const areSetsEqual = (a: any, b: any) => a.size === b.size && [...a].every((value: any) => b.has(value));
+                    const areSetsEqual = (a: Set<number>, b: Set<number>) => a.size === b.size && [...a].every((value) => b.has(value));
 
                     if (areSetsEqual(serverIds, currentIds)) {
                         return prev;
                     }
 
-                    const newTiles = serverHand.filter((t: any) => !currentIds.has(t.id));
+                    const newTiles = serverHand.filter((t) => !currentIds.has(t.id));
                     const goneTiles = currentTiles.filter(t => !serverIds.has(t.id));
 
                     let newSlots = [...prev];
@@ -225,7 +264,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                         }
                         // Case 3: Instant Sync (no animation pending)
                         else {
-                            newTiles.forEach((tile: any) => {
+                            newTiles.forEach((tile) => {
                                 // Skip if this tile is currently being animated elsewhere (safety)
                                 if (drawStatus.animatingTile && drawStatus.animatingTile.id === tile.id) return;
 
@@ -238,7 +277,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     // Initial draw sync
                     if (serverHand.length > 0 && currentTiles.length === 0 && !drawStatus.animatingTile) {
                         const slots = Array(30).fill(null);
-                        serverHand.forEach((t: any, i: number) => { if (i < 30) slots[i] = t; });
+                        serverHand.forEach((t, i) => { if (i < 30) slots[i] = t; });
                         return slots;
                     }
 
@@ -318,23 +357,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     }, [gameState?.players, currentUser.id]);
 
 
-    // Intro Animation Sequence
-    useEffect(() => {
-        if (introStep === 'dealing') {
-            soundManager.play('dealing', 0.02);
-            // Move to revealing after some time or wait for socket? 
-            // The original logic had a timer. Let's keep it simple.
-            // If server emits jokerRevealed, it sets introStep to 'revealing'.
-            return;
-        } else if (introStep === 'revealing') {
-            // Show reveal for 3 seconds with smooth fade-out
-            const timer = setTimeout(() => {
-                setIntroStep('done');
-                setIsPlayingIntro(false);
-            }, 3000);
-            return () => clearTimeout(timer);
-        }
-    }, [introStep]);
+
 
     // Guard against unwanted refresh
     useEffect(() => {
@@ -366,8 +389,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
         const onGameStarted = (state?: GameState) => {
             if (state) setGameState(state);
-            setIsPlayingIntro(true);
-            setIntroStep('dealing');
         };
 
         const onPlayerLeft = (playerId: string) => {
@@ -411,17 +432,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             setTimeout(() => setDisconnectMsg(null), 4000);
         };
 
-        const onJokerRevealed = (data: { indicator: any, okeyTile: any }) => {
-            console.log('[jokerRevealed] Received Joker reveal:', data);
-            soundManager.play('joker_reveal', 0.5);
-            setIntroStep('revealing');
-        };
+
 
         socket.on('gameState', onGameState);
         socket.on('gameStarted', onGameStarted);
         socket.on('playerLeft', onPlayerLeft);
         socket.on('error', onError);
-        socket.on('jokerRevealed', onJokerRevealed);
 
         socket.emit('getGameState');
         socket.emit('checkRoom', roomCode);
@@ -430,7 +446,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             socket.off('gameState', onGameState);
             socket.off('gameStarted', onGameStarted);
             socket.off('playerLeft', onPlayerLeft);
-            socket.off('jokerRevealed', onJokerRevealed);
             socket.off('error', onError);
         };
     }, [socket, currentUser.id, roomCode]); // Removed playersMap from dependencies
@@ -666,150 +681,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
     if (!gameState) return <div className="h-screen bg-[#1e3a29] flex items-center justify-center text-white">{t("connecting")}</div>;
 
-    // --- RENDER INTRO COMPONENT ---
-    const IntroOverlay = () => {
-        if (!isPlayingIntro || introStep === 'done') return null;
-
-        return (
-            <motion.div
-                initial={{ opacity: 1 }}
-                animate={{ opacity: introStep === 'revealing' ? [1, 1, 0] : 1 }}
-                transition={{
-                    duration: introStep === 'revealing' ? 3 : 1,
-                    times: introStep === 'revealing' ? [0, 0.8, 1] : undefined,
-                    ease: "easeInOut"
-                }}
-                className={`fixed inset-0 z-[100] flex items-center justify-center ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} overflow-hidden`}
-            >
-                {/* Immersive Background */}
-                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 animate-pulse"></div>
-                <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-red-900/40 via-transparent to-rose-900/40' : 'bg-gradient-to-br from-purple-900/40 via-transparent to-blue-900/40'}`}></div>
-
-                {/* Central Focus */}
-                <div className="relative z-10 flex flex-col items-center justify-center w-full h-full">
-
-                    {/* 1. DEALING ANIMATION (PREMIUM & PHYSICAL) */}
-                    {introStep === 'dealing' && (
-                        <div className="flex flex-col items-center">
-                            <motion.div
-                                initial={{ opacity: 0, scale: 0.8 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                className="mb-16 text-center"
-                            >
-                                <h2 className={`text-6xl md:text-8xl font-black text-transparent bg-clip-text ${is101Mode ? 'bg-gradient-to-b from-red-200 to-red-600' : 'bg-gradient-to-b from-yellow-200 to-yellow-600'} tracking-tighter italic drop-shadow-2xl`}>
-                                    OYUN BAŞLIYOR
-                                </h2>
-                                <div className="h-1 w-full bg-gradient-to-r from-transparent via-white/20 to-transparent mt-4"></div>
-                            </motion.div>
-
-                            <div className="relative w-80 h-80 flex items-center justify-center">
-                                {/* Deck */}
-                                <motion.div
-                                    className="relative z-20 w-32 h-44 bg-[#3e2723] rounded-2xl shadow-2xl border-2 border-white/10 flex items-center justify-center"
-                                >
-                                    <div className="text-5xl opacity-40">🎴</div>
-                                </motion.div>
-
-                                {/* Flying Tile Stacks */}
-                                {[0, 1, 2, 3].map((playerIdx) => (
-                                    [0, 1, 2].map((stackIdx) => (
-                                        <motion.div
-                                            key={`${playerIdx}-${stackIdx}`}
-                                            initial={{ x: 0, y: 0, scale: 0.5, opacity: 0, rotate: 0 }}
-                                            animate={{
-                                                x: playerIdx === 0 ? 0 : playerIdx === 1 ? 500 : playerIdx === 2 ? 0 : -500,
-                                                y: playerIdx === 0 ? 500 : playerIdx === 1 ? 0 : playerIdx === 2 ? -500 : 0,
-                                                scale: 1,
-                                                opacity: [0, 1, 0],
-                                                rotate: playerIdx * 90 + (stackIdx * 10)
-                                            }}
-                                            transition={{
-                                                duration: 1,
-                                                repeat: Infinity,
-                                                ease: "circOut",
-                                                delay: playerIdx * 0.2 + stackIdx * 0.1
-                                            }}
-                                            className="absolute z-10"
-                                        >
-                                            <div className="w-14 h-20 bg-[#fdfcdc] rounded-lg shadow-xl border border-gray-400"></div>
-                                        </motion.div>
-                                    ))
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 2. JOKER REVEAL ANIMATION (STAYED PREMIUM) */}
-                    {introStep === 'revealing' && (
-                        <div className="relative flex flex-col items-center">
-                            {/* Shockwave */}
-                            <motion.div
-                                initial={{ scale: 0, opacity: 1 }}
-                                animate={{ scale: 6, opacity: 0 }}
-                                transition={{ duration: 1.5, ease: "easeOut" }}
-                                className={`absolute w-64 h-64 rounded-full border-[10px] ${is101Mode ? 'border-red-500' : 'border-yellow-400'} z-0`}
-                            />
-
-                            <motion.div
-                                initial={{ scale: 0.2, rotateY: -180, opacity: 0 }}
-                                animate={{ scale: 1.2, rotateY: 0, opacity: 1 }}
-                                transition={{ duration: 0.8, ease: "backOut" }}
-                                className="relative z-10 w-64 h-80 perspective-1000"
-                            >
-                                <div className={`w-full h-full relative preserve-3d rounded-[2.5rem] overflow-hidden ${is101Mode ? 'bg-red-950 border-4 border-red-600 shadow-[0_0_150px_rgba(220,38,38,0.7)]' : 'bg-amber-950 border-4 border-yellow-500 shadow-[0_0_150px_rgba(234,179,8,0.7)]'}`}>
-                                    <div className="absolute inset-0 flex items-center justify-center scale-[3]">
-                                        <Tile {...gameState.indicator} size="lg" />
-                                    </div>
-                                    <motion.div
-                                        animate={{ x: ['-200%', '200%'] }}
-                                        transition={{ duration: 1.5, repeat: 0, ease: "linear", delay: 0.5 }}
-                                        className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -skew-x-20"
-                                    />
-                                </div>
-                            </motion.div>
-
-                            <motion.div
-                                initial={{ opacity: 0, y: 50 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.5 }}
-                                className="text-center mt-16 z-20"
-                            >
-                                <h3 className={`text-2xl ${is101Mode ? 'text-red-400' : 'text-yellow-400'} font-black uppercase tracking-[1em] mb-4 opacity-70`}>GÖSTERGE</h3>
-                                <h2 className="text-8xl font-black text-white drop-shadow-[0_10px_40px_rgba(0,0,0,1)] tracking-tighter">
-                                    <span className={`${is101Mode ? 'text-red-200' : 'text-yellow-200'}`}>{getColorName(gameState.indicator.color).toUpperCase()}</span> {gameState.indicator.value}
-                                </h2>
-
-                                <motion.div
-                                    initial={{ scaleX: 0, opacity: 0 }}
-                                    animate={{ scaleX: 1, opacity: 1 }}
-                                    transition={{ delay: 1.2, duration: 0.8 }}
-                                    className="mt-20 h-1 w-[30rem] bg-gradient-to-r from-transparent via-white/40 to-transparent relative mx-auto"
-                                >
-                                    <motion.div
-                                        initial={{ opacity: 0, y: 20 }}
-                                        animate={{ opacity: 1, y: -50 }}
-                                        transition={{ delay: 1.5 }}
-                                        className="absolute left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur-2xl px-12 py-4 rounded-3xl border border-white/20 shadow-2xl"
-                                    >
-                                        <span className={`text-4xl font-black italic tracking-[0.3em] ${is101Mode ? 'text-red-200' : 'text-yellow-200'} animate-pulse`}>
-                                            MAÇ BAŞLIYOR
-                                        </span>
-                                    </motion.div>
-                                </motion.div>
-                            </motion.div>
-                        </div>
-                    )}
-                </div>
-
-                <style jsx>{`
-                    .preserve-3d { transform-style: preserve-3d; }
-                    .backface-hidden { backface-visibility: hidden; }
-                    @keyframes animate-spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-                `}</style>
-            </motion.div>
-        );
-    };
-
     const DrawAnimationOverlay = () => {
         if (!drawStatus.animatingTile || !drawStatus.stage) return null;
 
@@ -861,6 +732,107 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         );
     };
 
+    // --- INTRO OVERLAY COMPONENT ---
+    const IntroOverlay = () => {
+        if (!showIntroOverlay || !gameState) return null;
+
+        return (
+            <div className="fixed inset-0 z-[999] bg-black/80 backdrop-blur-sm flex items-center justify-center overflow-hidden pointer-events-none">
+
+                {/* 1. COUNTDOWN (Removed) */}
+                <AnimatePresence>
+                </AnimatePresence>
+
+                {/* 2. DEALING ANIMATION (Radial Burst) */}
+                {introPhase === 'deal' && (
+                    <div className="absolute inset-0 pointer-events-none perspective-[1000px]">
+                        {/* Center Stack */}
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+                            {[...Array(5)].map((_, i) => (
+                                <div key={i} className="absolute w-12 h-16 bg-[#3e2716] border border-[#2a1a0e] rounded shadow-2xl"
+                                    style={{ transform: `translate(${-i}px, ${-i}px)` }}></div>
+                            ))}
+                        </div>
+
+                        {/* Bursting Tiles */}
+                        {[...Array(24)].map((_, i) => {
+                            const target = i % 4;
+                            const angle = target * 90; // 0, 90, 180, 270
+                            const delay = i * 0.08;
+
+                            // Random spread within the target direction
+                            const spread = (Math.random() - 0.5) * 30;
+                            // Move further out
+
+                            let tx = 0, ty = 0;
+                            if (target === 0) { tx = 0; ty = 450; } // Bottom
+                            else if (target === 1) { tx = 650; ty = 0; } // Right
+                            else if (target === 2) { tx = 0; ty = -450; } // Top
+                            else if (target === 3) { tx = -650; ty = 0; } // Left
+
+                            return (
+                                <motion.div
+                                    key={i}
+                                    initial={{ x: 0, y: 0, scale: 0, rotateX: 0 }}
+                                    animate={{
+                                        x: tx + (Math.random() * 50 - 25),
+                                        y: ty + (Math.random() * 50 - 25),
+                                        scale: 1,
+                                        opacity: [1, 1, 0],
+                                        rotateZ: Math.random() * 360,
+                                        rotateX: 360 // Flip while flying
+                                    }}
+                                    transition={{ duration: 0.8, delay: delay, ease: "backIn" }}
+                                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-14 bg-[#f3eacb] border border-[#8b5a2b] rounded-sm shadow-xl z-20"
+                                />
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* 3. JOKER REVEAL (Skyfall monolith) */}
+                {introPhase === 'joker' && (
+                    <div className="flex flex-col items-center justify-center gap-8 perspective-[1000px]">
+                        {/* Flash */}
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: [0, 1, 0] }}
+                            transition={{ duration: 0.2, delay: 0.5 }}
+                            className="fixed inset-0 bg-white z-[9999] pointer-events-none"
+                        />
+
+                        <motion.div
+                            initial={{ y: -1200, scale: 3, rotateY: 720 }}
+                            animate={{ y: 0, scale: 2, rotateY: 0 }}
+                            transition={{
+                                duration: 0.6,
+                                type: "spring",
+                                bounce: 0.3
+                            }}
+                            className="relative preserve-3d"
+                        >
+                            {/* The Monolith Tile */}
+                            <div className="relative w-16 h-22 shadow-[0_50px_100px_rgba(0,0,0,0.9)]">
+                                <Tile {...gameState.okeyTile} size="lg" className="glass-tile-effect border-4 border-yellow-500 shadow-[0_0_50px_rgba(234,179,8,0.8)]" />
+                            </div>
+                        </motion.div>
+
+                        <motion.div
+                            initial={{ opacity: 0, scale: 2 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: 0.6, type: "spring" }}
+                            className="text-white text-4xl font-black uppercase tracking-[0.5em] drop-shadow-[0_4px_0_rgba(0,0,0,1)]"
+                        >
+                            Gösterge
+                        </motion.div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const isIntroRunning = introPhase !== 'none';
+
 
     // --- RENDER GAME ---
     // Helper to render opponents based on relative position
@@ -895,10 +867,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
     return (
         <div className={`fixed inset-0 select-none overflow-hidden ${is101Mode ? 'bg-[#310000]' : 'bg-[#1a3a2a]'} perspective-1000 font-sans`}>
-            {/* Background Atmosphere */}
-            <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-[#4a0404] via-[#310000] to-[#1a0505]' : 'bg-gradient-to-br from-[#2d5a42] via-[#1a3a2a] to-[#0f241a]'} pointer-events-none opacity-40`}></div>
-            <div className={`absolute top-0 right-0 w-[800px] h-[800px] ${is101Mode ? 'bg-red-600/10' : 'bg-green-600/10'} rounded-full blur-[120px] pointer-events-none animate-pulse`}></div>
-            <div className={`absolute bottom-0 left-0 w-[800px] h-[800px] ${is101Mode ? 'bg-rose-600/10' : 'bg-emerald-600/10'} rounded-full blur-[120px] pointer-events-none animate-pulse`} style={{ animationDelay: "2s" }}></div>
+            {/* Background Atmosphere - Dimmed during Intro */}
+            <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-[#4a0404] via-[#310000] to-[#1a0505]' : 'bg-gradient-to-br from-[#2d5a42] via-[#1a3a2a] to-[#0f241a]'} pointer-events-none opacity-40 transition-all duration-1000 ${isIntroRunning ? 'brightness-50' : ''}`}></div>
+            <div className={`absolute top-0 right-0 w-[800px] h-[800px] ${is101Mode ? 'bg-red-600/10' : 'bg-green-600/10'} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 ${isIntroRunning ? 'opacity-0' : 'opacity-100'}`}></div>
+            <div className={`absolute bottom-0 left-0 w-[800px] h-[800px] ${is101Mode ? 'bg-rose-600/10' : 'bg-emerald-600/10'} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 ${isIntroRunning ? 'opacity-0' : 'opacity-100'}`} style={{ animationDelay: "2s" }}></div>
 
             {/* Particle Atmosphere */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -927,16 +899,17 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 ))}
             </div>
 
-            {/* Intro Overlay moved outside blurred container */}
-            {(isPlayingIntro && introStep !== 'done') && <IntroOverlay />}
+            {/* Intro Overlay - Takes over the screen */}
+            <AnimatePresence>
+                {isIntroRunning && <IntroOverlay />}
+            </AnimatePresence>
 
+            {/* MAIN GAME CONTENT - Strictly Hidden/Blocked during Intro */}
             <motion.div
-                animate={{
-                    scale: isPlayingIntro ? 1.05 : 1,
-                    filter: isPlayingIntro ? 'blur(2px) brightness(0.8)' : 'blur(0px) brightness(1)'
-                }}
-                transition={{ duration: 1.5, ease: "easeInOut" }}
                 className="w-full h-full relative"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: isIntroRunning ? 0 : 1 }}
+                transition={{ duration: 1.5, ease: "easeOut" }} // Slow fade-in after intro
             >
 
                 <AnimatePresence>
@@ -944,7 +917,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
                 <DrawAnimationOverlay />
                 <DiscardAnimationOverlay />
-                {gameState.status === 'FINISHED' && (
+                {gameState.status === 'FINISHED' && roomData && (
                     <WinnerOverlay
                         gameState={gameState}
                         currentUser={currentUser}
