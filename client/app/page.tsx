@@ -472,7 +472,7 @@ function HomeContent() {
                                                             value={roomCode}
                                                             onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
                                                             maxLength={4}
-                                                            placeholder="CODE"
+                                                            placeholder={t("room_code")}
                                                             className={`w-full bg-white border-4 border-gray-100 focus:border-indigo-500 rounded-2xl px-4 py-4 text-center font-mono text-3xl font-black ${currentTheme.accent} outline-none uppercase placeholder-gray-100 transition-all`}
                                                         />
                                                         <button
@@ -555,10 +555,9 @@ function HomeContent() {
         </AnimatePresence >
     );
 }
-
 export default function Home() {
     return (
-        <Suspense fallback={<div className="min-h-screen bg-[#0f0c29] flex items-center justify-center text-white font-bold text-2xl">Loading...</div>}>
+        <Suspense fallback={<div className="min-h-screen bg-[#0f0c29] flex items-center justify-center text-white font-bold text-2xl">...</div>}>
             <HomeContent />
         </Suspense>
     );

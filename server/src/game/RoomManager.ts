@@ -347,9 +347,9 @@ export class RoomManager {
                 return;
             }
 
-            // Check if all players (other than host maybe? or all inclusive) are ready
+            // Check if all players (inclusive) are ready
             // Bots are always ready.
-            const allReady = room.players.every(p => p.isReady || p.id === socket.id || p.isBot);
+            const allReady = room.players.every(p => p.isReady || p.isBot);
             if (!allReady) {
                 socket.emit('error', 'Everyone must be ready to start!');
                 return;

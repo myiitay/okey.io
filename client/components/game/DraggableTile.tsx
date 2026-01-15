@@ -187,7 +187,6 @@ export const DraggableTile = React.memo(({ tile, isMyTurn, onDiscard, isOkey = f
                     <Tile
                         color={tile.color}
                         value={tile.value}
-                        onClick={isMyTurn ? () => onDiscard(tile.id) : undefined}
                         className={`
                             shadow-md 
                             ${isDragging ? 'ring-4 ring-yellow-400 rotate-3' : 'hover:-translate-y-1'}

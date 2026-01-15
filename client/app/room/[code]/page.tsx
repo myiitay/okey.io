@@ -404,7 +404,7 @@ export default function RoomPage() {
                                 👥 {t("players")} <span className="bg-white/10 px-2 py-0.5 rounded text-sm text-white/60">{roomData.players.length}/4</span>
                             </h2>
                             <div className="text-xs text-yellow-400 font-bold bg-yellow-400/10 px-3 py-1 rounded-full animate-pulse border border-yellow-400/20">
-                                {roomData.players.filter(p => p.isReady || p.isBot || roomData.players[0].id === p.id).length}/{roomData.players.length} {t("ready_count") || "Hazır"}
+                                {roomData.players.filter(p => p.isReady || p.isBot).length}/{roomData.players.length} {t("ready_count") || "Hazır"}
                             </div>
                         </div>
 
@@ -428,7 +428,7 @@ export default function RoomPage() {
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span className="font-bold text-white text-lg tracking-wide truncate">{player.name}</span>
                                                 {player.id === socket.id && <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">{t("you")}</span>}
-                                                {index === 0 && <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">HOST</span>}
+                                                {index === 0 && <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">{t("host")}</span>}
                                             </div>
                                             {/* Emote Bubble */}
                                             <AnimatePresence>
@@ -458,9 +458,9 @@ export default function RoomPage() {
                                             </AnimatePresence>
                                             {/* Ready Status */}
                                             <div className="flex items-center gap-1.5 mt-1">
-                                                <div className={`w-2 h-2 rounded-full ${(player.isReady || player.isBot || index === 0) ? 'bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]' : 'bg-gray-600'}`}></div>
-                                                <span className={`text-[10px] font-black uppercase tracking-widest ${(player.isReady || player.isBot || index === 0) ? 'text-green-400' : 'text-gray-500'}`}>
-                                                    {(player.isReady || player.isBot || index === 0) ? t("ready") : t("unready")}
+                                                <div className={`w-2 h-2 rounded-full ${(player.isReady || player.isBot) ? 'bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]' : 'bg-gray-600'}`}></div>
+                                                <span className={`text-[10px] font-black uppercase tracking-widest ${(player.isReady || player.isBot) ? 'text-green-400' : 'text-gray-500'}`}>
+                                                    {(player.isReady || player.isBot) ? t("ready") : t("unready")}
                                                 </span>
                                             </div>
                                         </div>
@@ -489,7 +489,7 @@ export default function RoomPage() {
                                             {i === 0 && isHost ? "🤖" : ""}
                                         </div>
                                         <div className={`h-4 ${i === 0 && isHost ? 'w-auto text-white/40 font-bold' : 'w-32 bg-white/5 rounded animate-pulse'}`}>
-                                            {i === 0 && isHost ? "Bot Ekle" : ""}
+                                            {i === 0 && isHost ? t("add_bot") : ""}
                                         </div>
                                     </div>
                                     {i === 0 && isHost && (
@@ -497,7 +497,7 @@ export default function RoomPage() {
                                             onClick={handleAddBot}
                                             className="bg-yellow-500/20 hover:bg-yellow-500/40 text-yellow-400 px-4 py-2 rounded-xl text-sm font-bold border border-yellow-500/30 transition-all opacity-0 group-hover/bot:opacity-100"
                                         >
-                                            + EKLE
+                                            + {t("ready") === "HAZIR" ? "EKLE" : "ADD"}
                                         </button>
                                     )}
                                 </div>
@@ -506,29 +506,27 @@ export default function RoomPage() {
                     </div>
 
                     {/* Start Action */}
-                    <div className="mt-auto flex gap-4">
-                        {!isHost && (
-                            <button
-                                onClick={handleToggleReady}
-                                className={`flex-1 py-5 rounded-[1.5rem] font-black text-xl transition-all border-b-8 shadow-xl active:border-b-0 active:translate-y-2 ${roomData.players.find(p => p.id === socket.id)?.isReady ? 'bg-orange-500 text-white border-orange-700' : 'bg-green-500 text-white border-green-700'}`}
-                            >
-                                {roomData.players.find(p => p.id === socket.id)?.isReady ? t("unready") : t("ready")}
-                            </button>
-                        )}
+                    <div className="mt-auto flex flex-col gap-4">
+                        <button
+                            onClick={handleToggleReady}
+                            className={`w-full py-5 rounded-[1.5rem] font-black text-xl transition-all border-b-8 shadow-xl active:border-b-0 active:translate-y-2 ${roomData.players.find(p => p.id === socket.id)?.isReady ? 'bg-orange-500 text-white border-orange-700' : 'bg-green-500 text-white border-green-700'}`}
+                        >
+                            {roomData.players.find(p => p.id === socket.id)?.isReady ? t("unready") : t("ready")}
+                        </button>
 
-                        {isHost ? (
-                            <div className="flex-1 flex flex-col gap-2">
-                                {!roomData.players.every(p => p.isReady || p.id === socket.id || p.isBot) && (
+                        {isHost && (
+                            <div className="w-full flex flex-col gap-2">
+                                {!roomData.players.every(p => p.isReady || p.isBot) && (
                                     <div className="text-center text-xs font-bold text-yellow-400 animate-pulse bg-yellow-400/10 py-2 rounded-xl border border-yellow-400/20">
                                         ⚠️ {t("everyone_ready_warning")}
                                     </div>
                                 )}
                                 <button
                                     onClick={() => { soundManager.play('click'); handleStartGame(); }}
-                                    disabled={roomData.players.length !== 2 && roomData.players.length !== 4 || isStarting}
+                                    disabled={roomData.players.length !== 2 && roomData.players.length !== 4 || isStarting || !roomData.players.every(p => p.isReady || p.isBot)}
                                     className={`
                                         w-full relative py-5 rounded-[1.5rem] font-black text-2xl text-white shadow-xl overflow-hidden transition-all duration-300
-                                        ${(roomData.players.length !== 2 && roomData.players.length !== 4) || isStarting ? 'bg-gray-600 cursor-not-allowed scale-95 opacity-80 grayscale' : 'bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 hover:shadow-[0_0_40px_rgba(34,197,94,0.4)] hover:scale-[1.02] active:scale-95'}
+                                        ${(roomData.players.length !== 2 && roomData.players.length !== 4) || isStarting || !roomData.players.every(p => p.isReady || p.isBot) ? 'bg-gray-600 cursor-not-allowed scale-95 opacity-80 grayscale' : 'bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 hover:shadow-[0_0_40px_rgba(34,197,94,0.4)] hover:scale-[1.02] active:scale-95'}
                                     `}
                                 >
                                     <span className={`relative z-10 flex items-center justify-center gap-3 ${isStarting ? 'animate-pulse' : ''}`}>
@@ -539,8 +537,9 @@ export default function RoomPage() {
                                     {!isStarting && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>}
                                 </button>
                             </div>
-                        ) : (
-                            <div className="flex-1 bg-white/5 backdrop-blur border border-white/10 py-5 rounded-[1.5rem] text-center text-white/50 font-bold text-lg animate-pulse flex flex-col gap-1 justify-center">
+                        )}
+                        {!isHost && (
+                            <div className="w-full bg-white/5 backdrop-blur border border-white/10 py-5 rounded-[1.5rem] text-center text-white/50 font-bold text-lg animate-pulse flex flex-col gap-1 justify-center">
                                 <span>{t("waiting_host")}</span>
                             </div>
                         )}

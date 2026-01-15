@@ -110,26 +110,7 @@ export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
                             </>
                         )}
 
-                        {/* WINNING HAND DISPLAY */}
-                        {!isDraw && winner && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.5 }}
-                                className="mt-4 mb-10 p-6 bg-black/40 rounded-3xl border border-white/5 shadow-inner"
-                            >
-                                <h3 className="text-white/40 text-[10px] font-black uppercase tracking-[0.3em] mb-4">
-                                    Kazanan El
-                                </h3>
-                                <div className="flex flex-wrap justify-center gap-2 max-w-full">
-                                    {displayHand.map((tile, idx) => (
-                                        <div key={tile.id || idx} className="transform scale-[0.65] md:scale-[0.8] origin-center -m-2 opacity-90 hover:opacity-100 transition-opacity">
-                                            <Tile {...tile} size="sm" className="shadow-2xl" />
-                                        </div>
-                                    ))}
-                                </div>
-                            </motion.div>
-                        )}
+
 
                         <div className="grid grid-cols-2 gap-4">
                             <button

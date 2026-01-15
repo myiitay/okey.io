@@ -34,7 +34,7 @@ export const dictionary: Record<string, Record<Language, string>> = {
     "copy": { tr: "KOPYALA", en: "COPY" },
     "copied": { tr: "KOPYALANDI", en: "COPIED" },
     "players": { tr: "OYUNCULAR", en: "PLAYERS" },
-    "host": { tr: "KURUCU", en: "HOST" },
+    "host": { tr: "KURUCU", en: "KURUCU" },
     "you": { tr: "SEN", en: "YOU" },
     "start_match": { tr: "OYUNU BAŞLAT 🚀", en: "START MATCH 🚀" },
     "waiting_host": { tr: "Kurucunun başlatması bekleniyor...", en: "Waiting for host to start..." },
@@ -80,10 +80,24 @@ export const dictionary: Record<string, Record<Language, string>> = {
     "emote_clap": { tr: "Tebrikler 👏", en: "Congrats 👏" },
 
     "invalid_hand_size": { tr: "Finish için bitiş taşına ihtiyacınız var!", en: "You need a finish tile to finish!" },
+    "return_home": { tr: "ANA SAYFAYA DÖN", en: "RETURN HOME" },
+    "starting": { tr: "BAŞLATILIYOR...", en: "STARTING..." },
+    "spectator_mode": { tr: "İzleyici Modu: Oda Dolu", en: "Spectator Mode: Room Full" },
+    "add_bot": { tr: "Bot Ekle", en: "Add Bot" },
+    "loading": { tr: "Yükleniyor...", en: "Loading..." },
+    "finish_indicator": { tr: "BİTİR (GÖSTERGE)", en: "FINISH (INDICATOR)" },
+    "left_side_drag": { tr: "SOL TARAF (SÜRÜKLE)", en: "LEFT SIDE (DRAG)" },
+    "right_side_drag": { tr: "SAĞ TARAF (SÜRÜKLE-AT)", en: "RIGHT SIDE (DISCARD)" },
+    "empty": { tr: "BOŞ", en: "EMPTY" },
+    "discarded": { tr: "ATILAN", en: "DISCARDED" },
+    "spectating": { tr: "İZLİYORSUNUZ", en: "SPECTATING" },
+    "spectator_info": { tr: "Sadece izleme modu • Müdahale edilemez", en: "Spectator mode only • No interaction" },
+    "auto_arrange": { tr: "Otomatik Diz (Per)", en: "Auto Arrange" },
+    "click_copy": { tr: "Kopyalamak için tıkla", en: "Click to copy" },
 };
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [language, setLanguage] = useState<Language>('en');
+    const [language, setLanguage] = useState<Language>('tr');
 
     useEffect(() => {
         // Auto-detect based on navigator

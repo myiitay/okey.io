@@ -15,12 +15,13 @@ import {
     DragEndEvent,
     DragStartEvent,
     MouseSensor,
-    TouchSensor
+    TouchSensor,
+    useDndContext
 } from '@dnd-kit/core';
 import { useLanguage } from "@/contexts/LanguageContext";
 import { motion, AnimatePresence } from 'framer-motion';
 import { TileData, GameState, RoomData } from './game/types';
-import { arrangeByGroups, arrangeByColor, arrangeByValue, arrangeByPotential, getColorName, getRelativePlayer } from '../utils/gameLogics';
+import { arrangeByGroups, arrangeByColor, arrangeByValue, arrangeByPotential } from '../utils/gameLogics';
 // Imports for extracted components
 import { DraggableTile, Tile } from './game/DraggableTile';
 import { PlayerAvatar } from './game/PlayerAvatar';
@@ -88,6 +89,11 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 setIntroPhase('none');
                 setShowIntroOverlay(false);
                 soundManager.play('game_start');
+
+                // Start 30s timer for Auto-Arrange button visibility
+                setTimeout(() => {
+                    setIsAutoArrangeVisible(false);
+                }, 30000);
             }, 3000); // 3 seconds to admire (slightly longer)
             return () => clearTimeout(timer);
         }
@@ -110,6 +116,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         return Array(30).fill(null);
     });
     const [showSideHint, setShowSideHint] = useState(false);
+    const [pendingDrawSlot, setPendingDrawSlot] = useState<number | null>(null);
     const [lastTurnState, setLastTurnState] = useState(false);
     const [lastDiscardCount, setLastDiscardCount] = useState<number>(0);
     const [disconnectMsg, setDisconnectMsg] = useState<string | null>(null);
@@ -132,6 +139,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     const { t } = useLanguage();
     const [disconnectedPlayers, setDisconnectedPlayers] = useState<Set<string>>(new Set());
     const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+    const [isAutoArrangeVisible, setIsAutoArrangeVisible] = useState(true);
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -226,8 +234,14 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     // Handle new tiles from server
                     if (newTiles.length > 0) {
                         newTiles.forEach((tile) => {
-                            const emptyIdx = newSlots.findIndex(s => s === null);
-                            if (emptyIdx !== -1) newSlots[emptyIdx] = tile;
+                            const emptyIdx = (pendingDrawSlot !== null && newSlots[pendingDrawSlot] === null)
+                                ? pendingDrawSlot
+                                : newSlots.findIndex(s => s === null);
+
+                            if (emptyIdx !== -1) {
+                                newSlots[emptyIdx] = tile;
+                                if (emptyIdx === pendingDrawSlot) setPendingDrawSlot(null);
+                            }
                         });
                         setDrawStatus({ isPending: false, source: null, animatingTile: null, stage: null });
                     }
@@ -243,7 +257,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 });
             }
         }
-    }, [gameState, currentUser.id, drawStatus]);
+    }, [gameState, currentUser.id, drawStatus, pendingDrawSlot]);
 
 
 
@@ -422,11 +436,16 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         const activeId = active.id.toString();
         const overId = over.id.toString();
 
-        // 1. Drawing Logic (Drag from Deck/Left Pile to Rack)
-        if ((activeId === 'deck-source' || activeId === 'left-pile-source') && overId.startsWith('slot-')) {
-            if (activeId === 'deck-source') handleDrawCenter();
-            else handleDrawLeft();
-            return;
+        // 1. Drawing Logic (Drag from Deck/Left Pile to Rack or Slots)
+        if ((activeId === 'deck-source' || activeId === 'left-pile-source')) {
+            if (overId.startsWith('slot-') || overId === 'rack-droppable') {
+                if (overId.startsWith('slot-')) {
+                    setPendingDrawSlot(parseInt(overId.split('-')[1]));
+                }
+                if (activeId === 'deck-source') handleDrawCenter();
+                else handleDrawLeft();
+                return;
+            }
         }
 
         // 2. Discard Logic (Drag Rack Tile to Right Zone)
@@ -494,16 +513,13 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 {...attributes}
                 className={`
                     absolute left-[35%] top-1/2 -translate-y-1/2 -translate-x-1/2
-                    w-24 h-32 bg-[#3e2723] rounded-sm transform rotate-[-5deg]
-                    shadow-[5px_5px_15px_rgba(0,0,0,0.5)]
                     flex items-center justify-center transition-all duration-300 group
-                    ${canDraw ? (is101Mode ? 'hover:-translate-y-2 hover:rotate-0 cursor-grab active:cursor-grabbing ring-2 ring-red-400' : 'hover:-translate-y-2 hover:rotate-0 cursor-grab active:cursor-grabbing ring-2 ring-yellow-400') : ''}
-                    ${isDragging ? 'opacity-40 grayscale' : ''}
+                    touch-none z-10
+                    ${canDraw ? 'cursor-grab active:cursor-grabbing hover:scale-110' : ''}
+                    ${isDragging ? 'opacity-0' : 'opacity-100'}
                 `}>
-                <div className="w-20 h-28 bg-[#fdfcdc] rounded-[2px] border border-[#d7ccc8] flex items-center justify-center">
-                    <div className="w-14 h-20 border-2 border-[#8d6e63] opacity-20"></div>
-                </div>
-                <div className="absolute -top-3 -right-3 bg-red-600 text-white font-bold text-xs w-6 h-6 rounded-full flex items-center justify-center shadow-lg border border-white">
+                <Tile isBack size="lg" className="shadow-2xl" />
+                <div className="absolute -top-3 -right-3 bg-red-600 text-white font-bold text-xs w-6 h-6 rounded-full flex items-center justify-center shadow-lg border border-white z-20">
                     {gameState.centerCount}
                 </div>
             </div>
@@ -513,38 +529,42 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     const DraggableLeftPile = () => {
         if (!gameState) return null;
         const leftPlayerIndex = (myIndex - 1 + gameState.players.length) % gameState.players.length;
-        const leftPlayerDiscards = gameState.players[leftPlayerIndex]?.discards;
-        const lastTile = leftPlayerDiscards?.[leftPlayerDiscards.length - 1];
+        const leftPlayerDiscards = gameState.players[leftPlayerIndex]?.discards || [];
+        const lastTile = leftPlayerDiscards[leftPlayerDiscards.length - 1];
+        const underTile = leftPlayerDiscards[leftPlayerDiscards.length - 2];
         const player = gameState.players[myIndex];
         const canDraw = isMyTurn && player && player.hand.length < 15 && !!lastTile;
 
-        const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+        const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
             id: 'left-pile-source',
-            disabled: !canDraw
+            disabled: !canDraw,
+            data: lastTile
         });
-        const style = transform ? {
-            transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(1.05)`,
-            zIndex: 1000
-        } : undefined;
 
         return (
-            <div className={`absolute left-4 flex flex-col items-center group transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
-                <div className="text-[10px] text-white/30 font-bold mb-1 uppercase tracking-tighter italic">SOL TARAF (SÜRÜKLE)</div>
+            <div className={`absolute left-0 flex flex-col items-center group transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
+                <div className="text-[10px] text-white/30 font-bold mb-2 uppercase tracking-tighter italic">{t("left_side_drag")}</div>
                 <div className="w-14 h-20 flex items-center justify-center relative">
+                    {/* The tile underneath (visible when top tile is dragged) */}
+                    {underTile && (
+                        <div className="absolute opacity-40 transform -translate-y-1 -translate-x-1 scale-95">
+                            <Tile {...underTile} size="md" />
+                        </div>
+                    )}
+
                     {lastTile ? (
                         <div
                             ref={setNodeRef}
-                            style={style}
                             {...listeners}
                             {...attributes}
-                            className={`relative group transition-all duration-300 ${canDraw ? 'cursor-grab active:cursor-grabbing' : ''} ${isDragging ? 'opacity-40' : ''}`}
+                            className={`relative group transition-all duration-300 touch-none ${canDraw ? 'cursor-grab active:cursor-grabbing' : ''} ${isDragging ? 'opacity-0' : 'opacity-100'}`}
                         >
                             <div className={`transition-all duration-300 ${canDraw ? (is101Mode ? 'ring-4 ring-red-500 shadow-[0_0_30px_red]' : 'ring-4 ring-blue-500 shadow-[0_0_30px_blue]') : ''} rounded overflow-hidden`}>
                                 <Tile {...lastTile} size="md" className="shadow-lg" />
                             </div>
                         </div>
                     ) : (
-                        <div className="w-14 h-20 border-2 border-dashed border-white/5 rounded-sm flex items-center justify-center text-white/5 text-[8px] font-bold uppercase tracking-widest bg-black/5">BOŞ</div>
+                        <div className="w-14 h-20 border-2 border-dashed border-white/5 rounded-sm flex items-center justify-center text-white/5 text-[8px] font-bold uppercase tracking-widest bg-black/5">{t("empty")}</div>
                     )}
                 </div>
             </div>
@@ -890,6 +910,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
             >
+                <DragOverlay dropAnimation={null}>
+                    <ActiveDragItem />
+                </DragOverlay>
+
                 <motion.div
                     className={`w-full h-full relative ${isIntroRunning ? 'pointer-events-none' : ''}`}
                     initial={{ opacity: 0 }}
@@ -999,7 +1023,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                             <div className="relative flex flex-col items-center">
                                 <IndicatorDroppable />
                                 <Tile {...gameState.indicator} size="md" className="rotate-3 shadow-2xl group-hover:rotate-0 transition-transform duration-500" />
-                                <div className="absolute -bottom-8 bg-black/40 px-2 py-0.5 rounded text-[8px] text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity uppercase tracking-widest">BİTİR (GÖSTERGE)</div>
+                                <div className="absolute -bottom-8 bg-black/40 px-2 py-0.5 rounded text-[8px] text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity uppercase tracking-widest">{t("finish_indicator")}</div>
                             </div>
                         </div>
 
@@ -1007,8 +1031,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                         <DraggableLeftPile />
 
                         {/* RIGHT ZONE (My Target) */}
-                        <div className={`absolute right-4 flex flex-col items-center transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
-                            <div className="text-[10px] text-white/30 font-bold mb-1 uppercase tracking-tighter italic">SAĞ TARAF (SÜRÜKLE-AT)</div>
+                        <div className={`absolute right-0 flex flex-col items-center transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
+                            <div className="text-[10px] text-white/30 font-bold mb-2 uppercase tracking-tighter italic">{t("right_side_drag")}</div>
                             <div className="w-14 h-20 flex items-center justify-center relative">
                                 {isMyTurn && <DiscardZoneDroppable />}
                                 {gameState.players[myIndex].discards.length > 0 ? (
@@ -1018,7 +1042,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                                         className="shadow-lg opacity-80"
                                     />
                                 ) : (
-                                    <div className="w-14 h-20 border-2 border-dashed border-white/10 rounded-sm flex items-center justify-center text-white/10 text-[8px] font-bold uppercase tracking-widest bg-black/5">ATILAN</div>
+                                    <div className="w-14 h-20 border-2 border-dashed border-white/10 rounded-sm flex items-center justify-center text-white/10 text-[8px] font-bold uppercase tracking-widest bg-black/5">{t("discarded")}</div>
                                 )}
                             </div>
                         </div>
@@ -1045,75 +1069,127 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     </div>
 
                     {/* --- MY RACK (Main Interaction) --- */}
-                    <div className="absolute bottom-0 left-0 w-full h-[250px] flex justify-center items-end pb-0 z-30 perspective-1000">
-                        {!isSpectator ? (
-                            <div className={`
-                        relative bg-[#3e2723] w-full max-w-[95%] md:max-w-[1100px] h-[160px] rounded-t-lg shadow-[0_-20px_60px_rgba(0,0,0,0.8)] border-t-[8px] border-[#5d4037] flex items-center justify-center pb-4 transform rotateX(5deg) origin-bottom transition-all duration-300 hover:rotateX(0deg)
-                        ${isMyTurn ? 'ring-4 ring-yellow-400 shadow-[0_-20px_80px_rgba(255,215,0,0.4)]' : ''}
-                        ${isArranging ? 'animate-[rackPulse_0.5s_ease-in-out]' : ''}
-                    `}>
-                                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-30 mix-blend-overlay pointer-events-none"></div>
-
-                                {/* Auto-Arrange Button */}
-                                <button
-                                    onClick={handleAutoArrange}
-                                    title="Otomatik Diz (Per)"
-                                    className={`absolute -top-14 right-4 ${is101Mode ? 'bg-red-600/80 hover:bg-red-500 shadow-[0_0_20px_rgba(220,38,38,0.4)]' : 'bg-yellow-500/80 hover:bg-yellow-400 shadow-[0_0_20px_rgba(255,215,0,0.4)]'} text-white w-12 h-12 rounded-full flex items-center justify-center text-2xl backdrop-blur border border-white/20 transition-all hover:scale-110 active:scale-90 z-[60]`}
-                                >
-                                    💡
-                                </button>
-
-                                {/* Local Player Turn Timer */}
-                                {isMyTurn && (
-                                    <div className="absolute -top-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1">
-                                        <div className="flex items-center justify-center bg-black/60 backdrop-blur-xl px-8 py-2 rounded-2xl border border-yellow-400/30 shadow-[0_0_30px_rgba(255,215,0,0.2)] min-w-[100px]">
-                                            <div className={`text-3xl font-black ${gameState.turnTimer < 10 ? 'text-red-500 animate-pulse' : 'text-yellow-400'}`}>
-                                                {gameState.turnTimer}
-                                            </div>
-                                        </div>
-                                        {/* Small visual bar */}
-                                        <div className="w-48 h-1.5 bg-white/10 rounded-full overflow-hidden border border-white/5">
-                                            <motion.div
-                                                initial={false}
-                                                animate={{ width: `${(gameState.turnTimer / 25) * 100}%` }}
-                                                className={`h-full ${gameState.turnTimer < 10 ? 'bg-red-500' : 'bg-yellow-400'}`}
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="grid grid-rows-2 grid-cols-15 gap-x-3 gap-y-2 px-6 relative">
-                                    {rackSlots.map((tile, i) => (
-                                        <DroppableSlot key={i} id={`slot-${i}`}>
-                                            {tile ? (
-                                                <div className="animate-[tilePop_0.3s_ease-out_forwards]">
-                                                    <DraggableTile
-                                                        tile={tile}
-                                                        isMyTurn={isMyTurn}
-                                                        onDiscard={handleDiscard}
-                                                        isOkey={gameState && gameState.okeyTile && tile.color === gameState.okeyTile.color && tile.value === gameState.okeyTile.value}
-                                                        onFlip={handleFlipTile}
-                                                        isFlipped={flipAnimationIds.has(tile.id)}
-                                                        hasBeenFlipped={flippedTileIds.has(tile.id)}
-                                                    />
-                                                </div>
-                                            ) : null}
-                                        </DroppableSlot>
-                                    ))}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="relative bg-[#1a1a2e]/60 w-full max-w-[950px] h-[160px] rounded-t-3xl border-t-2 border-x-2 border-blue-500/30 flex flex-col items-center justify-center backdrop-blur-xl shadow-[0_-20px_50px_rgba(59,130,246,0.2)] animate-pulse">
-                                <div className="text-4xl mb-2">👁️</div>
-                                <div className="text-blue-400 font-black text-2xl tracking-widest uppercase">{t("spectating") || "İZLİYORSUNUZ"}</div>
-                                <div className="text-blue-400/40 text-[10px] font-bold mt-1">Sadece izleme modu • Müdahele edilemez</div>
-                            </div>
-                        )}
-                    </div>
+                    <PlayerRackDroppable
+                        isSpectator={isSpectator}
+                        isMyTurn={isMyTurn}
+                        isArranging={isArranging}
+                        handleAutoArrange={handleAutoArrange}
+                        is101Mode={is101Mode}
+                        gameState={gameState}
+                        rackSlots={rackSlots}
+                        handleDiscard={handleDiscard}
+                        handleFlipTile={handleFlipTile}
+                        flipAnimationIds={flipAnimationIds}
+                        flippedTileIds={flippedTileIds}
+                        isAutoArrangeVisible={isAutoArrangeVisible}
+                    />
                 </motion.div>
             </DndContext>
         </div>
     );
+};
+
+// Droppable Rack Component
+const PlayerRackDroppable = ({
+    isSpectator, isMyTurn, isArranging, handleAutoArrange, is101Mode, gameState, rackSlots, handleDiscard, handleFlipTile, flipAnimationIds, flippedTileIds, isAutoArrangeVisible
+}: any) => {
+    const { setNodeRef, isOver } = useDroppable({ id: 'rack-droppable' });
+    const { t } = useLanguage();
+
+    return (
+        <div ref={setNodeRef} className="absolute bottom-0 left-0 w-full h-[250px] flex justify-center items-end pb-0 z-30 perspective-1000">
+            {!isSpectator ? (
+                <div className={`
+                    relative bg-[#3e2723] w-full max-w-[95%] md:max-w-[1100px] h-[160px] rounded-t-lg shadow-[0_-20px_60px_rgba(0,0,0,0.8)] border-t-[8px] border-[#5d4037] flex items-center justify-center pb-4 transform rotateX(5deg) origin-bottom transition-all duration-300 hover:rotateX(0deg)
+                    ${isMyTurn ? 'ring-4 ring-yellow-400 shadow-[0_-20px_80px_rgba(255,215,0,0.4)]' : ''}
+                    ${isArranging ? 'animate-[rackPulse_0.5s_ease-in-out]' : ''}
+                    ${isOver ? 'bg-[#5d4037]' : ''}
+                `}>
+                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-30 mix-blend-overlay pointer-events-none"></div>
+
+                    {/* Auto-Arrange Button - Only visible for the first 30s */}
+                    {isAutoArrangeVisible && (
+                        <button
+                            onClick={handleAutoArrange}
+                            title={t("auto_arrange")}
+                            className={`absolute -top-14 right-4 ${is101Mode ? 'bg-red-600/80 hover:bg-red-500 shadow-[0_0_20px_rgba(220,38,38,0.4)]' : 'bg-yellow-500/80 hover:bg-yellow-400 shadow-[0_0_20px_rgba(255,215,0,0.4)]'} text-white w-12 h-12 rounded-full flex items-center justify-center text-2xl backdrop-blur border border-white/20 transition-all hover:scale-110 active:scale-90 z-[60]`}
+                        >
+                            💡
+                        </button>
+                    )}
+
+                    {/* Local Player Turn Timer */}
+                    {isMyTurn && (
+                        <div className="absolute -top-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1">
+                            <div className="flex items-center justify-center bg-black/60 backdrop-blur-xl px-8 py-2 rounded-2xl border border-yellow-400/30 shadow-[0_0_30px_rgba(255,215,0,0.2)] min-w-[100px]">
+                                <div className={`text-3xl font-black ${gameState.turnTimer < 10 ? 'text-red-500 animate-pulse' : 'text-yellow-400'}`}>
+                                    {gameState.turnTimer}
+                                </div>
+                            </div>
+                            <div className="w-48 h-1.5 bg-white/10 rounded-full overflow-hidden border border-white/5">
+                                <motion.div
+                                    initial={false}
+                                    animate={{ width: `${(gameState.turnTimer / 25) * 100}%` }}
+                                    className={`h-full ${gameState.turnTimer < 10 ? 'bg-red-500' : 'bg-yellow-400'}`}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="grid grid-rows-2 grid-cols-15 gap-x-3 gap-y-2 px-6 relative">
+                        {rackSlots.map((tile: any, i: number) => (
+                            <DroppableSlot key={i} id={`slot-${i}`}>
+                                {tile ? (
+                                    <div className="animate-[tilePop_0.3s_ease-out_forwards]">
+                                        <DraggableTile
+                                            tile={tile}
+                                            isMyTurn={isMyTurn}
+                                            onDiscard={handleDiscard}
+                                            isOkey={gameState && gameState.okeyTile && tile.color === gameState.okeyTile.color && tile.value === gameState.okeyTile.value}
+                                            onFlip={handleFlipTile}
+                                            isFlipped={flipAnimationIds.has(tile.id)}
+                                            hasBeenFlipped={flippedTileIds.has(tile.id)}
+                                        />
+                                    </div>
+                                ) : null}
+                            </DroppableSlot>
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                <div className="relative bg-[#1a1a2e]/60 w-full max-w-[950px] h-[160px] rounded-t-3xl border-t-2 border-x-2 border-blue-500/30 flex flex-col items-center justify-center backdrop-blur-xl shadow-[0_-20px_50px_rgba(59,130,246,0.2)] animate-pulse">
+                    <div className="text-4xl mb-2">👁️</div>
+                    <div className="text-blue-400 font-black text-2xl tracking-widest uppercase">{t("spectating")}</div>
+                    <div className="text-blue-400/40 text-[10px] font-bold mt-1">{t("spectator_info")}</div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Component to render the item being dragged
+const ActiveDragItem = () => {
+    const { active } = useDndContext();
+    if (!active) return null;
+
+    const activeId = active.id.toString();
+
+    if (activeId === 'deck-source') {
+        return <Tile isBack size="md" className="shadow-2xl ring-4 ring-yellow-400 rotate-3 opacity-90 scale-110" />;
+    }
+
+    if (activeId === 'left-pile-source') {
+        const tile = active.data.current as TileData;
+        return <Tile {...tile} size="md" className="shadow-2xl ring-4 ring-blue-400 rotate-3 opacity-90 scale-110" />;
+    }
+
+    // Hand tiles
+    if (!isNaN(parseInt(activeId))) {
+        const tile = active.data.current as TileData;
+        return <Tile {...tile} size="md" className="shadow-2xl ring-4 ring-yellow-400 rotate-3 opacity-90 scale-110" />;
+    }
+
+    return null;
 };
 
 // Droppable Slot Component

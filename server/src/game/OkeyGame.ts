@@ -33,7 +33,7 @@ export class OkeyGame {
     private turnIndex: number = 0;
     private status: 'PLAYING' | 'FINISHED' = 'PLAYING';
     private onStateChange: (state: GameState) => void;
-    private turnTimer: number = 25;
+    private turnTimer: number = 30;
     private timerInterval: NodeJS.Timeout | null = null;
 
     constructor(playerIds: string[], onStateChange: (state: GameState) => void) {
@@ -73,7 +73,7 @@ export class OkeyGame {
 
     private startTimer() {
         this.stopTimer();
-        this.turnTimer = 25;
+        this.turnTimer = 30;
         this.timerInterval = setInterval(() => {
             if (this.status === 'FINISHED') {
                 this.stopTimer();
