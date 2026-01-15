@@ -243,16 +243,32 @@ export class OkeyGame {
 
     private drawFromCenter(playerIndex: number) {
         if (this.players[playerIndex].hand.length !== 14) throw new Error("Already drew or have too many tiles");
-        const tile = this.deck.pop();
-        if (!tile) {
-            // Deck is empty - Draw condition
-            console.log(`[OkeyGame] Deck exhausted. Game ends in a draw.`);
-            this.status = 'FINISHED';
-            this.onStateChange(this.getGameState());
-            return;
+
+        if (this.deck.length === 0) {
+            console.log(`[OkeyGame] Deck empty. Reshuffling discards...`);
+            // Collect all discards
+            const allDiscards: Tile[] = [];
+            this.players.forEach(p => {
+                allDiscards.push(...p.discards);
+                p.discards = [];
+            });
+
+            if (allDiscards.length === 0) {
+                console.log(`[OkeyGame] No discards to reshuffle. Game ends in a draw.`);
+                this.status = 'FINISHED';
+                this.onStateChange(this.getGameState());
+                return;
+            }
+
+            this.deck = allDiscards;
+            this.shuffleDeck();
         }
-        this.players[playerIndex].hand.push(tile);
-        this.onStateChange(this.getGameState());
+
+        const tile = this.deck.pop();
+        if (tile) {
+            this.players[playerIndex].hand.push(tile);
+            this.onStateChange(this.getGameState());
+        }
     }
 
     private drawFromLeft(playerIndex: number) {

@@ -2,6 +2,8 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import { GameState, RoomData } from './types';
+import { Tile } from './DraggableTile';
+import { arrangeByGroups } from '../../utils/gameLogics';
 
 interface WinnerOverlayProps {
     gameState: GameState;
@@ -31,6 +33,20 @@ export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
 
     const myPlayerState = playersList.find((p) => p.id === currentUser.id);
     const iVoted = myPlayerState?.readyToRestart;
+
+    // Arrange winner's hand for better display
+    const winnerHandRaw = !isDraw && winner ? (gameState.players.find(p => p.id === winner.id)?.hand || []) : [];
+
+    let displayHand: any[] = [];
+    if (winnerHandRaw.length > 0) {
+        const okeyTiles = winnerHandRaw.filter(t => t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value);
+        const fakeJokers = winnerHandRaw.filter(t => t.color === 'fake');
+        const normalTiles = winnerHandRaw.filter(t => {
+            const isOkey = t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value;
+            return !isOkey && t.color !== 'fake';
+        });
+        displayHand = arrangeByGroups(normalTiles, okeyTiles, fakeJokers).filter(t => t !== null);
+    }
 
     return (
         <AnimatePresence>
@@ -88,10 +104,31 @@ export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
                                 <h2 className="text-5xl font-black text-white mb-2 tracking-tight">
                                     {winner?.name || "Biri"} Kazandı
                                 </h2>
-                                <p className="text-white/40 text-lg font-medium mb-12">
+                                <p className="text-white/40 text-lg font-medium mb-8">
                                     Bir sonraki elde şansın dönebilir!
                                 </p>
                             </>
+                        )}
+
+                        {/* WINNING HAND DISPLAY */}
+                        {!isDraw && winner && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.5 }}
+                                className="mt-4 mb-10 p-6 bg-black/40 rounded-3xl border border-white/5 shadow-inner"
+                            >
+                                <h3 className="text-white/40 text-[10px] font-black uppercase tracking-[0.3em] mb-4">
+                                    Kazanan El
+                                </h3>
+                                <div className="flex flex-wrap justify-center gap-2 max-w-full">
+                                    {displayHand.map((tile, idx) => (
+                                        <div key={tile.id || idx} className="transform scale-[0.65] md:scale-[0.8] origin-center -m-2 opacity-90 hover:opacity-100 transition-opacity">
+                                            <Tile {...tile} size="sm" className="shadow-2xl" />
+                                        </div>
+                                    ))}
+                                </div>
+                            </motion.div>
                         )}
 
                         <div className="grid grid-cols-2 gap-4">
