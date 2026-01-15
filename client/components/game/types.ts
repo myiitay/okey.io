@@ -19,6 +19,7 @@ export interface GameState {
     turnIndex: number;
     status: 'PLAYING' | 'FINISHED';
     winnerId?: string;
+    turnTimer: number;
 }
 
 export interface RoomPlayer {

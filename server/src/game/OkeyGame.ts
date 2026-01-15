@@ -21,6 +21,7 @@ export interface GameState {
     turnIndex: number;
     status: 'PLAYING' | 'FINISHED';
     winnerId?: string;
+    turnTimer: number;
 }
 
 export class OkeyGame {
@@ -32,6 +33,8 @@ export class OkeyGame {
     private turnIndex: number = 0;
     private status: 'PLAYING' | 'FINISHED' = 'PLAYING';
     private onStateChange: (state: GameState) => void;
+    private turnTimer: number = 25;
+    private timerInterval: NodeJS.Timeout | null = null;
 
     constructor(playerIds: string[], onStateChange: (state: GameState) => void) {
         this.playerIds = playerIds;
@@ -64,7 +67,59 @@ export class OkeyGame {
     public start(): GameState {
         // After dealing, select the Joker from remaining deck
         this.selectJoker();
+        this.startTimer();
         return this.getGameState();
+    }
+
+    private startTimer() {
+        this.stopTimer();
+        this.turnTimer = 25;
+        this.timerInterval = setInterval(() => {
+            if (this.status === 'FINISHED') {
+                this.stopTimer();
+                return;
+            }
+
+            this.turnTimer--;
+            if (this.turnTimer <= 0) {
+                this.handleTimeout();
+            } else {
+                this.onStateChange(this.getGameState());
+            }
+        }, 1000);
+    }
+
+    private stopTimer() {
+        if (this.timerInterval) {
+            clearInterval(this.timerInterval);
+            this.timerInterval = null;
+        }
+    }
+
+    private async handleTimeout() {
+        const player = this.players[this.turnIndex];
+        console.log(`[OkeyGame] Timeout for player ${player.id}. Auto-playing...`);
+
+        try {
+            // 1. If didn't draw, draw from center
+            if (player.hand.length === 14) {
+                this.drawFromCenter(this.turnIndex);
+            }
+
+            // 2. Discard a tile (last one in hand for simplicity)
+            if (player.hand.length === 15) {
+                const tileToDiscard = player.hand[player.hand.length - 1];
+                this.discardTile(this.turnIndex, tileToDiscard.id);
+            }
+        } catch (err) {
+            console.error("[OkeyGame] Auto-play error:", err);
+            // Fallback: just skip turn if something goes wrong
+            this.players[this.turnIndex].isTurn = false;
+            this.turnIndex = (this.turnIndex + 1) % this.players.length;
+            this.players[this.turnIndex].isTurn = true;
+            this.startTimer();
+            this.onStateChange(this.getGameState());
+        }
     }
 
     private selectJoker() {
@@ -234,6 +289,7 @@ export class OkeyGame {
         this.turnIndex = (this.turnIndex + 1) % this.players.length;
         this.players[this.turnIndex].isTurn = true;
 
+        this.startTimer();
         this.onStateChange(this.getGameState());
     }
 
@@ -276,7 +332,8 @@ export class OkeyGame {
             okeyTile: this.okeyTile,
             centerCount: this.deck.length,
             turnIndex: this.turnIndex,
-            status: this.status
+            status: this.status,
+            turnTimer: this.turnTimer
         };
     }
 }

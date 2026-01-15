@@ -176,8 +176,9 @@ export class HandValidator {
         if (tiles.length === 0) return true;
 
         tiles.sort((a, b) => {
-            if (a.isJoker) return 1; // Jokers at end
-            if (b.isJoker) return -1;
+            if (a.isJoker && !b.isJoker) return 1;
+            if (!a.isJoker && b.isJoker) return -1;
+            if (a.isJoker && b.isJoker) return 0;
             if (a.value !== b.value) return a.value - b.value;
             return a.color.localeCompare(b.color);
         });
@@ -200,76 +201,12 @@ export class HandValidator {
             if (this.solve(remaining)) return true;
         }
 
-        // 3. SPECIAL CASE: 12-13-1 Run
-        // Since we sort by value, '1' comes first. Standard 'findPossibleRuns' looks for 1-2-3.
-        // It misses 12-13-1 because 1 is processed before 12 and 13.
-        // We explicitly check if this '1' can complete a 12-13-1 chain.
+        // 3. Try Wrapping Run ending in 1 (e.g., 11-12-13-1)
         if (current.value === 1 && !current.isJoker) {
-            // Find candidates for 13 (Exact or Joker)
-            const cand13 = rest.filter(t => (t.value === 13 && t.color === current.color && !t.isJoker) || t.isJoker);
-
-            for (const t13 of cand13) {
-                // Remove chosen t13 from potential pool for 12
-                const restAfter13 = rest.filter(x => x.id !== t13.id);
-
-                // Find candidates for 12 (Exact or Joker)
-                const cand12 = restAfter13.filter(t => (t.value === 12 && t.color === current.color && !t.isJoker) || t.isJoker);
-
-                for (const t12 of cand12) {
-                    // Start a new 12-13-1 chain
-                    // We also need to check if we can extend it further? e.g. 11-12-13-1?
-                    // The standard algorithm extends "downwards"? No, "findPossibleRuns" extends "upwards" (value+1).
-                    // This block handles the "End of loop" wrap-around.
-                    // If we have 11-12-13-1, "11" (value 11) would be processed later? No, sorted by value.
-                    // 1, 11, 12, 13
-                    // 1 is processed first.
-                    // If we consume 1, 12, 13 here. 11 is left.
-                    // 11 needs 12, 13 (consumed). 11 is orphan. Code fails.
-
-                    // Ideally we should "Extend" this 12-13-1 downwards if possible? 
-                    // Or just consume 12-13-1 and recursive solve handles the rest?
-                    // If 11 is left, solve([11]) fails.
-
-                    // BUT: If strict Okey, 12-13-1 is a valid set. 
-                    // 11-12-13-1 is also valid (length 4).
-                    // Can we include 11? 
-                    // Standard logic: findPossibleRuns(11) -> 12, 13, 1?
-                    // If findPossibleRuns handles 13->1 wrap?
-                    // Line 297: `if (needValue > 13) needValue = 1;`
-                    // So if we start with 11. 11->12->13->1.
-                    // But 1 is sorted to index 0. 
-                    // `current` is 1. We MUST consume 1 now.
-                    // So if we use 1-12-13, we effectively break the 11-12-13-1 chain into 1-12-13 and 11.
-                    // 11 is lost.
-
-                    // Fix: Try to Greedy Extend this 12-13-1 back to 11, 10... ??
-                    // NO. 12-13-1 is 3 tiles. It's a valid run.
-                    // 11-12-13-1 is 4 tiles. 
-                    // If we break it, we leave 11.
-                    // However, 11-12-13 is also a valid run (length 3).
-                    // If actual hand is 11-12-13-1.
-                    // We can pick 11-12-13. Left: 1. 1 is orphan.
-                    // OR we pick 1-13-12. Left: 11. 11 is orphan.
-                    // So 11-12-13-1 fails if we enforce strict groups >3?
-                    // If we allow groups of 1? No.
-
-                    // Wait, 11-12-13-1 IS 1 set.
-                    // We need to form ONE set {1, 13, 12, 11}.
-                    // Our logic forms {1, 13, 12}.
-                    // If we can extend 12 "downwards" to 11?
-
-                    // Let's implement basic 12-13-1 first. 
-                    // Handling 11-12-13-1 requires realizing "1" is actually "14".
-                    // If we renamed "1" to "14" and re-sorted...
-
-                    const group = [current, t13, t12];
-
-                    // Try to extend downwards from t12 (value 12)?
-                    // Not easy here.
-
-                    const remaining = this.removeTiles(tiles, group);
-                    if (this.solve(remaining)) return true;
-                }
+            const wrapRuns = this.findWrappingRunsEndingInOne(current, rest);
+            for (const run of wrapRuns) {
+                const remaining = this.removeTiles(tiles, run);
+                if (this.solve(remaining)) return true;
             }
         }
 
@@ -329,60 +266,67 @@ export class HandValidator {
 
     private static findPossibleRuns(start: any, pool: any[]): any[][] {
         if (start.isJoker) return [];
-
         const results: any[][] = [];
 
-        // Run: Same color. Consec values.
-        // We need next values: start.value+1, +2...
-        // Special case: 13 -> 1.
-
-        // Search depth: up to 14? Usually sets stop around 4-5 naturally, but can be 14.
-        // We just iterate trying to extend.
-
-        const tryExtend = (currentChain: any[], needValue: number) => {
+        const tryExtend = (currentChain: any[], nextValue: number, hasWrapped: boolean) => {
             if (currentChain.length >= 3) {
                 results.push([...currentChain]);
             }
 
-            // Try to find a tile for 'needValue'
-            // Wrap 13->1
-            if (needValue > 13) needValue = 1;
+            // In standard Okey, a wrap-around run ending in 1 is terminal. (e.g., 12-13-1)
+            // It cannot be continued with 2.
+            if (hasWrapped && currentChain[currentChain.length - 1].value === 1) {
+                return;
+            }
 
-            // Find in pool
-            // Candidates: (Same color AND Value == needValue) OR Joker
-            // Use local pool (excluding used)
-            // But 'pool' argument is fixed. We need to check if used.
-            // Actually, we pass 'pool' which are available tiles.
+            let effectiveNextValue = nextValue;
+            let willWrap = hasWrapped;
 
-            // Optimization: Just find ONE valid extension per step? 
-            // If we have duplicate 7-Red, we might need branching? 
-            // In Okey standard set/run finding, usually duplicates are redundant for the *same* run.
-            // But we might use one 7-Red for a pair and another for a run?
-            // Yes, so we should try all instances.
+            if (effectiveNextValue > 13) {
+                if (willWrap) return; // Cannot wrap twice
+                effectiveNextValue = 1;
+                willWrap = true;
+            }
 
             const candidates = pool.filter(t =>
-                !currentChain.includes(t) && // Not already used in this chain
-                (t.isJoker || (t.color === start.color && t.value === needValue))
+                !currentChain.some(c => c.id === t.id) &&
+                (t.isJoker || (t.color === start.color && t.value === effectiveNextValue))
             );
 
-            if (candidates.length === 0) return;
-
-            // For each valid next tile, recurse
-            // To avoid explosion, maybe we just pick Distinct candidates?
-            // If we have two Red-5s:
-            // Run Red-4, Red-5(A)...
-            // Run Red-4, Red-5(B)... 
-            // Yes need to branch.
-
-            // Limit depth to avoid infinite loop with jokers? 13 is max run.
-            if (currentChain.length >= 13) return;
-
             for (const next of candidates) {
-                tryExtend([...currentChain, next], needValue + 1);
+                tryExtend([...currentChain, next], effectiveNextValue + 1, willWrap);
             }
         };
 
-        tryExtend([start], start.value + 1);
+        tryExtend([start], start.value + 1, false);
+        return results;
+    }
+
+    private static findWrappingRunsEndingInOne(oneTile: any, pool: any[]): any[][] {
+        const results: any[][] = [];
+
+        // We are at '1'. We want to find chains like [..., 11, 12, 13, 1]
+        // Search backwards: 1 -> 13 -> 12 -> 11 ...
+        const tryExtendBackwards = (currentChain: any[], nextNeededValue: number) => {
+            if (currentChain.length >= 3) {
+                results.push([...currentChain]);
+            }
+
+            // Standard Okey runs don't typically go below length 3,
+            // but we can have 11-12-13-1 (len 4), 10-11-12-13-1 (len 5) etc.
+            if (nextNeededValue < 1) return;
+
+            const candidates = pool.filter(t =>
+                !currentChain.some(c => c.id === t.id) &&
+                (t.isJoker || (t.color === oneTile.color && t.value === nextNeededValue))
+            );
+
+            for (const prev of candidates) {
+                tryExtendBackwards([...currentChain, prev], nextNeededValue - 1);
+            }
+        };
+
+        tryExtendBackwards([oneTile], 13);
         return results;
     }
 }

@@ -126,8 +126,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     const [flipAnimationIds, setFlipAnimationIds] = useState<Set<number>>(new Set()); // Tracks current flip animation state (toggle)
 
     // Discard Animation States
-    const [discardingTile, setDiscardingTile] = useState<TileData | null>(null);
-    const [isDiscardAnimating, setIsDiscardAnimating] = useState(false);
     const [isArranging, setIsArranging] = useState(false);
     const [arrangeMode, setArrangeMode] = useState<'groups' | 'color' | 'value' | 'potential'>('groups');
     const [roomData, setRoomData] = useState<RoomData | null>(null);
@@ -227,51 +225,11 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
                     // Handle new tiles from server
                     if (newTiles.length > 0) {
-                        const tileToAnimate = newTiles[0];
-
-                        // Case 1: DRAW_CENTER (animatingTile is null initially)
-                        if (drawStatus.isPending && !drawStatus.animatingTile) {
-                            setDrawStatus(prevS => ({ ...prevS, isPending: false, animatingTile: tileToAnimate, stage: 'revealing' }));
-
-                            setTimeout(() => setDrawStatus(prevS => ({ ...prevS, stage: 'flying' })), 1600);
-                            setTimeout(() => {
-                                setRackSlots(currentSlots => {
-                                    if (currentSlots.some(s => s?.id === tileToAnimate.id)) return currentSlots;
-                                    const finalSlots = [...currentSlots];
-                                    const emptyIdx = finalSlots.findIndex(s => s === null);
-                                    if (emptyIdx !== -1) finalSlots[emptyIdx] = tileToAnimate;
-                                    return finalSlots;
-                                });
-                                setDrawStatus({ isPending: false, source: null, animatingTile: null, stage: null });
-                            }, 2800);
-                        }
-                        // Case 2: DRAW_LEFT (animatingTile is already set)
-                        else if (drawStatus.isPending && drawStatus.animatingTile) {
-                            // Mark as handled immediately to prevent re-triggering
-                            setDrawStatus(prevS => ({ ...prevS, isPending: false }));
-
-                            // Already has animatingTile, just wait for flight to finish and add to rack
-                            setTimeout(() => {
-                                setRackSlots(currentSlots => {
-                                    if (currentSlots.some(s => s?.id === tileToAnimate.id)) return currentSlots;
-                                    const finalSlots = [...currentSlots];
-                                    const emptyIdx = finalSlots.findIndex(s => s === null);
-                                    if (emptyIdx !== -1) finalSlots[emptyIdx] = tileToAnimate;
-                                    return finalSlots;
-                                });
-                                setDrawStatus({ isPending: false, source: null, animatingTile: null, stage: null });
-                            }, 2000);
-                        }
-                        // Case 3: Instant Sync (no animation pending)
-                        else {
-                            newTiles.forEach((tile) => {
-                                // Skip if this tile is currently being animated elsewhere (safety)
-                                if (drawStatus.animatingTile && drawStatus.animatingTile.id === tile.id) return;
-
-                                const emptyIdx = newSlots.findIndex(s => s === null);
-                                if (emptyIdx !== -1) newSlots[emptyIdx] = tile;
-                            });
-                        }
+                        newTiles.forEach((tile) => {
+                            const emptyIdx = newSlots.findIndex(s => s === null);
+                            if (emptyIdx !== -1) newSlots[emptyIdx] = tile;
+                        });
+                        setDrawStatus({ isPending: false, source: null, animatingTile: null, stage: null });
                     }
 
                     // Initial draw sync
@@ -506,15 +464,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         const pIdx = gameState?.players.findIndex(p => p.id === currentUser.id);
         const isTurn = pIdx !== undefined && pIdx !== -1 && gameState?.players[pIdx]?.isTurn;
 
-        if (!isTurn || isDiscardAnimating || pIdx === undefined || pIdx === -1) return;
+        if (!isTurn || pIdx === undefined || pIdx === -1) return;
 
         // Client-side validation: Must have 15 tiles to discard
         if (gameState.players[pIdx].hand.length !== 15) {
-            // For MVP, just return or show quick hint. The server would error anyway, 
-            // but checking here prevents the "error" event roundtrip.
-            // We can use the existing disconnectMsg state for a generic 'warning' toast 
-            // but let's just trigger a sound or small UI shake if possible.
-            // For now, just blocking it is enough to stop the crash.
             soundManager.play('error');
             alert("Önce taş çekmelisiniz (veya elinizde 15 taş olmalı)!");
             return;
@@ -522,14 +475,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
         const tile = rackSlots.find(t => t?.id === tileId);
         if (!tile) return;
-        setDiscardingTile(tile);
-        setIsDiscardAnimating(true);
         socket.emit("gameAction", { type: "DISCARD", payload: { tileId } });
-
-        setTimeout(() => {
-            setDiscardingTile(null);
-            setIsDiscardAnimating(false);
-        }, 800); // 0.8s for discard flight
     };
 
     const handleFlipTile = (tileId: number) => {
@@ -562,7 +508,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         const isTurn = player?.isTurn;
 
         if (!isTurn || drawStatus.isPending || gameState?.centerCount === 0 || !player || player.hand.length >= 15) return;
-        setDrawStatus({ isPending: true, source: 'center', animatingTile: null, stage: 'revealing' });
+        setDrawStatus({ isPending: true, source: 'center', animatingTile: null, stage: null });
         socket.emit("gameAction", { type: "DRAW_CENTER" });
     };
 
@@ -573,25 +519,11 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
         // Robust check to prevent double-draw / double-click
         if (!gameState || !player || pIdx === undefined) return;
-
-        // Check if already 15 tiles (already drawn)
         if (player.hand.length >= 15) return;
-
-        // Check if turn
         if (!player.isTurn) return;
-
-        // Check visual animations
         if (drawStatus.isPending) return;
 
-        setDrawStatus({ isPending: true, source: 'left', animatingTile: null, stage: 'flying' }); // animatingTile set below
-
-        const leftPlayerIndex = (pIdx - 1 + gameState.players.length) % gameState.players.length;
-        if (gameState.players[leftPlayerIndex].discards.length === 0) return;
-
-        const tileToTake = gameState.players[leftPlayerIndex].discards.slice(-1)[0];
-
-        // Update local state immediately for animation
-        setDrawStatus(prev => ({ ...prev, animatingTile: tileToTake }));
+        setDrawStatus({ isPending: true, source: 'left', animatingTile: null, stage: null });
         socket.emit("gameAction", { type: "DRAW_LEFT" });
     };
 
@@ -681,56 +613,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
     if (!gameState) return <div className="h-screen bg-[#1e3a29] flex items-center justify-center text-white">{t("connecting")}</div>;
 
-    const DrawAnimationOverlay = () => {
-        if (!drawStatus.animatingTile || !drawStatus.stage) return null;
 
-        const isCenter = drawStatus.source === 'center';
-
-        return (
-            <div className="fixed inset-0 z-[100] pointer-events-none overflow-hidden">
-                <div
-                    className={`
-                        absolute transition-all duration-[1500ms] cubic-bezier(0.19, 1, 0.22, 1)
-                        ${drawStatus.stage === 'revealing' ?
-                            (isCenter ? 'left-1/2 top-[45%]' : 'left-[15%] top-[45%]') + ' -translate-x-1/2 -translate-y-1/2 scale-[2.3] z-[200]' :
-                            'left-1/2 bottom-[140px] -translate-x-1/2 scale-100 z-[100]'
-                        }
-                    `}
-                    style={{
-                        perspective: '1500px'
-                    }}
-                >
-                    <div className={`
-                        relative w-14 h-20 preserve-3d transition-transform duration-[1500ms] shadow-[0_30px_60px_rgba(0,0,0,0.6)]
-                        ${drawStatus.stage === 'revealing' && isCenter ? 'animate-[drawFlip_1.5s_cubic-bezier(0.23, 1, 0.32, 1)_forwards]' : ''}
-                    `}>
-                        {/* Front */}
-                        <div className="absolute inset-0 backface-hidden">
-                            <Tile {...drawStatus.animatingTile} size="lg" className="glass-tile-effect" />
-                        </div>
-                        {/* Back */}
-                        <div className="absolute inset-0 backface-hidden rotate-y-180">
-                            <Tile isBack size="lg" className="glass-tile-effect" />
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    const DiscardAnimationOverlay = () => {
-        if (!discardingTile || !isDiscardAnimating) return null;
-
-        return (
-            <div className="fixed inset-0 z-[100] pointer-events-none overflow-hidden">
-                <div
-                    className="absolute left-1/2 bottom-[140px] -translate-x-1/2 animate-[discardFlight_0.8s_ease-in_forwards] shadow-[0_20px_50px_rgba(0,0,0,0.5)]"
-                >
-                    <Tile {...discardingTile} size="lg" className="glass-tile-effect" />
-                </div>
-            </div>
-        );
-    };
 
     // --- INTRO OVERLAY COMPONENT ---
     const IntroOverlay = () => {
@@ -740,8 +623,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             <div className="fixed inset-0 z-[999] bg-black/80 backdrop-blur-sm flex items-center justify-center overflow-hidden pointer-events-none">
 
                 {/* 1. COUNTDOWN (Removed) */}
-                <AnimatePresence>
-                </AnimatePresence>
 
                 {/* 2. DEALING ANIMATION (Radial Burst) */}
                 {introPhase === 'deal' && (
@@ -906,17 +787,13 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
             {/* MAIN GAME CONTENT - Strictly Hidden/Blocked during Intro */}
             <motion.div
-                className="w-full h-full relative"
+                className={`w-full h-full relative ${isIntroRunning ? 'pointer-events-none' : ''}`}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: isIntroRunning ? 0 : 1 }}
                 transition={{ duration: 1.5, ease: "easeOut" }} // Slow fade-in after intro
             >
 
-                <AnimatePresence>
-                </AnimatePresence>
 
-                <DrawAnimationOverlay />
-                <DiscardAnimationOverlay />
                 {gameState.status === 'FINISHED' && roomData && (
                     <WinnerOverlay
                         gameState={gameState}
@@ -975,7 +852,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 <div className="absolute top-8 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2 transition-opacity duration-500">
                     {topPlayer && (
                         <>
-                            <PlayerAvatar player={topPlayer} info={playersMap[topPlayer.id]} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} />
+                            <PlayerAvatar player={topPlayer} info={playersMap[topPlayer.id]} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} turnTimer={gameState.turnTimer} />
                             <OpponentRack player={topPlayer} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} />
                         </>
                     )}
@@ -985,7 +862,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 <div className="absolute left-[15%] top-1/2 -translate-y-1/2 z-10 flex flex-row items-center gap-6">
                     {leftPlayer && (
                         <div className="flex flex-col items-center gap-4">
-                            <PlayerAvatar player={leftPlayer} info={playersMap[leftPlayer.id]} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} />
+                            <PlayerAvatar player={leftPlayer} info={playersMap[leftPlayer.id]} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} turnTimer={gameState.turnTimer} />
                             <div className="rotate-0 ml-0"> {/* Container tweak for vertical alignment */}
                                 <OpponentRack player={leftPlayer} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} />
                             </div>
@@ -997,7 +874,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 <div className="absolute right-[15%] top-1/2 -translate-y-1/2 z-10 flex flex-row-reverse items-center gap-6">
                     {rightPlayer && (
                         <div className="flex flex-col items-center gap-4">
-                            <PlayerAvatar player={rightPlayer} info={playersMap[rightPlayer.id]} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} />
+                            <PlayerAvatar player={rightPlayer} info={playersMap[rightPlayer.id]} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} turnTimer={gameState.turnTimer} />
                             <div className="rotate-0 mr-0">
                                 <OpponentRack player={rightPlayer} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} />
                             </div>
@@ -1143,6 +1020,29 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                             >
                                 💡
                             </button>
+
+                            {/* Local Player Turn Timer */}
+                            {isMyTurn && (
+                                <div className="absolute -top-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1">
+                                    <div className="flex items-center gap-3 bg-black/60 backdrop-blur-xl px-6 py-2 rounded-2xl border border-yellow-400/30 shadow-[0_0_30px_rgba(255,215,0,0.2)]">
+                                        <div className={`text-2xl font-black ${gameState.turnTimer < 10 ? 'text-red-500 animate-pulse' : 'text-yellow-400'}`}>
+                                            {gameState.turnTimer}s
+                                        </div>
+                                        <div className="w-[2px] h-6 bg-white/10"></div>
+                                        <div className="text-white/80 text-xs font-bold uppercase tracking-widest">
+                                            {t("your_turn_desc") || "SIRA SİZDE"}
+                                        </div>
+                                    </div>
+                                    {/* Small visual bar */}
+                                    <div className="w-48 h-1.5 bg-white/10 rounded-full overflow-hidden border border-white/5">
+                                        <motion.div
+                                            initial={false}
+                                            animate={{ width: `${(gameState.turnTimer / 25) * 100}%` }}
+                                            className={`h-full ${gameState.turnTimer < 10 ? 'bg-red-500' : 'bg-yellow-400'}`}
+                                        />
+                                    </div>
+                                </div>
+                            )}
 
                             <DndContext
                                 sensors={sensors}
