@@ -15,8 +15,14 @@ function HomeContent() {
 
     const [nickname, setNickname] = useState("");
     const [avatarId, setAvatarId] = useState(0);
+    const [frameId, setFrameId] = useState<string>("none");
     const [theme, setTheme] = useState<'royal' | 'emerald' | 'noir' | 'wood'>('royal');
+    const [tableTheme, setTableTheme] = useState<'green' | 'marble' | 'neon'>('green');
+    const [tablePattern, setTablePattern] = useState<'none' | 'geometric' | 'floral' | 'minimalist'>('none');
+    const [tileDesign, setTileDesign] = useState<'classic' | 'modern'>('classic');
+    const [isAvatarAnimated, setIsAvatarAnimated] = useState(false);
     const [isLoaded, setIsLoaded] = useState(false);
+    const [isMarketOpen, setIsMarketOpen] = useState(false);
     const [roomCode, setRoomCode] = useState("");
     const searchParams = useSearchParams();
 
@@ -40,14 +46,33 @@ function HomeContent() {
         "🕴🏻", "🧘🏻‍♂️", "🧘🏻‍♀️", "🏄🏻‍♂️", "🏄🏻‍♀️", "🏊🏻‍♂️", "🏊🏻‍♀️", "⛹🏻‍♂️"
     ];
 
+    const frames = [
+        { id: 'none', name: 'Yok', color: 'transparent', style: 'rounded-full border-white/20' },
+        { id: 'gold', name: 'Altın', color: '#ffd700', style: 'rounded-full border-4 border-[#ffd700] shadow-[0_0_15px_rgba(255,215,0,0.3)]' },
+        { id: 'neon', name: 'Neon', color: '#00f2ff', style: 'rounded-full border-4 border-[#00f2ff] shadow-[0_0_15px_rgba(0,242,255,0.3)]' },
+        { id: 'fire', name: 'Alev', color: '#ff4500', style: 'rounded-full border-4 border-[#ff4500] shadow-[0_0_15px_rgba(255,69,0,0.3)]' },
+        { id: 'royal', name: 'Kraliyet', color: '#8a2be2', style: 'rounded-full border-4 border-[#8a2be2] shadow-[0_0_15px_rgba(138,43,226,0.3)]' },
+        { id: 'emerald', name: 'Zümrüt', color: '#10b981', style: 'rounded-full border-4 border-[#10b981] shadow-[0_0_15px_rgba(16,185,129,0.3)]' },
+    ];
+
     // Load preferences and Attempt Reconnection
     useEffect(() => {
         const savedName = localStorage.getItem("okey_nickname");
         const savedAvatar = localStorage.getItem("okey_avatar");
+        const savedFrame = localStorage.getItem("okey_frame");
         if (savedName) setNickname(savedName);
         if (savedAvatar) setAvatarId(parseInt(savedAvatar));
+        if (savedFrame) setFrameId(savedFrame);
         const savedTheme = localStorage.getItem("okey_theme") as any;
         if (savedTheme) setTheme(savedTheme);
+        const savedTableTheme = localStorage.getItem("okey_table_theme") as any;
+        if (savedTableTheme) setTableTheme(savedTableTheme);
+        const savedTablePattern = localStorage.getItem("okey_table_pattern") as any;
+        if (savedTablePattern) setTablePattern(savedTablePattern);
+        const savedTileDesign = localStorage.getItem("okey_tile_design") as any;
+        if (savedTileDesign) setTileDesign(savedTileDesign);
+        const savedAvatarAnim = localStorage.getItem("okey_avatar_anim");
+        if (savedAvatarAnim) setIsAvatarAnimated(savedAvatarAnim === 'true');
 
         setIsLoaded(true);
 
@@ -62,9 +87,14 @@ function HomeContent() {
         if (isLoaded) {
             localStorage.setItem("okey_nickname", nickname);
             localStorage.setItem("okey_avatar", avatarId.toString());
+            localStorage.setItem("okey_frame", frameId);
             localStorage.setItem("okey_theme", theme);
+            localStorage.setItem("okey_table_theme", tableTheme);
+            localStorage.setItem("okey_table_pattern", tablePattern);
+            localStorage.setItem("okey_tile_design", tileDesign);
+            localStorage.setItem("okey_avatar_anim", isAvatarAnimated.toString());
         }
-    }, [nickname, avatarId, theme, isLoaded]);
+    }, [nickname, avatarId, frameId, theme, tableTheme, tablePattern, tileDesign, isAvatarAnimated, isLoaded]);
 
     // Handle Auto-Join via URL
     useEffect(() => {
@@ -79,7 +109,8 @@ function HomeContent() {
                     socket.emit("joinRoom", {
                         code: joinCode.toUpperCase(),
                         name: nickname,
-                        avatar: avatars[avatarId]
+                        avatar: avatars[avatarId],
+                        frameId: frameId
                     });
                 }, 500);
                 return () => clearTimeout(timer);
@@ -153,9 +184,10 @@ function HomeContent() {
 
         socket.on("error", (msg: string) => {
             console.error("Socket error:", msg);
-            if (isRejoining && (msg.includes("Session") || msg.includes("expired"))) {
+            if (isRejoining && (msg.toLowerCase().includes("session") || msg.toLowerCase().includes("expired"))) {
                 localStorage.removeItem("okey_session_token");
                 setIsRejoining(false);
+                return; // Suppress UI error for standard session expiration
             }
             setError(msg);
             setTimeout(() => setError(""), 3000);
@@ -181,7 +213,7 @@ function HomeContent() {
             return;
         }
         soundManager.play('click');
-        socket.emit("createRoom", { name: nickname, avatar: avatars[avatarId] });
+        socket.emit("createRoom", { name: nickname, avatar: avatars[avatarId], frameId: frameId });
     };
 
     const handleJoin = () => {
@@ -196,7 +228,7 @@ function HomeContent() {
             return;
         }
         soundManager.play('click');
-        socket.emit("joinRoom", { code: roomCode, name: nickname, avatar: avatars[avatarId] });
+        socket.emit("joinRoom", { code: roomCode, name: nickname, avatar: avatars[avatarId], frameId: frameId });
     };
 
     // Background Tiles
@@ -217,7 +249,6 @@ function HomeContent() {
             animationDelay: `${i * 0.5}s`,
             transform: `rotate(${i * 15}deg)`
         }));
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setTileStyles(styles);
     }, []);
 
@@ -265,8 +296,9 @@ function HomeContent() {
     }, []);
 
     return (
-        <AnimatePresence>
+        <>
             <motion.div
+                key="main-content"
                 initial={{ x: "-100%" }}
                 animate={isBurning ? {
                     x: "-100%",
@@ -331,9 +363,11 @@ function HomeContent() {
                     </button>
                 </div>
 
-                {/* --- Theme Switcher (Moved below 101 button) --- */}
-                <div className="absolute top-48 left-6 z-50 flex flex-col gap-3">
-                    <div className="flex flex-col gap-3 bg-black/20 backdrop-blur-md p-3 rounded-3xl border border-white/10">
+                {/* --- Advanced Settings Panel (Centered Left) --- */}
+                <div className="absolute left-6 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-4 max-h-[80vh] overflow-y-auto custom-scrollbar pr-2">
+                    {/* UI Themes - Streamlined */}
+                    <div className="flex flex-col gap-2 bg-black/40 backdrop-blur-xl p-3 rounded-[2rem] border border-white/10 shadow-2xl">
+                        <div className="text-[10px] font-black text-white/40 uppercase tracking-widest text-center mb-1">STİL</div>
                         {(Object.keys(themeConfigs) as Array<keyof typeof themeConfigs>).map((tKey) => (
                             <button
                                 key={tKey}
@@ -376,11 +410,9 @@ function HomeContent() {
 
                     {/* --- Main Card --- */}
                     <div
-                        className="w-full bg-white/95 backdrop-blur-sm rounded-[40px] shadow-[0_30px_70px_rgba(0,0,0,0.4)] border-b-8 border-black/10 overflow-hidden relative transition-transform duration-300 ease-out hover:[transform:rotateX(2deg)_rotateY(2deg)]"
+                        className="w-full bg-white/95 backdrop-blur-sm rounded-[40px] shadow-[0_30px_70px_rgba(0,0,0,0.4)] border-b-8 border-black/10 relative transition-transform duration-300 ease-out hover:[transform:rotateX(2deg)_rotateY(2deg)]"
                         style={{ perspective: '1000px' }}
                     >
-                        <div className={`h-4 w-full bg-gradient-to-r ${currentTheme.button}`}></div>
-
                         <div className="p-6 relative">
                             {error && (
                                 <div className="mb-4 bg-red-100 border-2 border-red-400 text-red-600 px-4 py-3 rounded-2xl font-bold flex items-center gap-2 animate-bounce">
@@ -404,25 +436,52 @@ function HomeContent() {
 
                                     {/* --- Inputs --- */}
                                     <div className="flex flex-col items-center mb-6">
-                                        <div className="relative group/avatar">
-                                            <div className={`w-24 h-24 bg-white rounded-full border-4 ${theme === 'noir' ? 'border-gray-800' : 'border-white'} shadow-xl flex items-center justify-center text-5xl mb-3 relative hover:scale-110 transition-transform cursor-pointer overflow-visible ring-4 ${theme === 'wood' ? 'ring-amber-900/20' : 'ring-indigo-500/10'}`}>
-                                                {avatars[avatarId]}
-                                                {/* Frame Decoration */}
-                                                <div className={`absolute inset-[-8px] border-2 rounded-full opacity-50 ${theme === 'royal' ? 'border-indigo-400' : theme === 'emerald' ? 'border-emerald-400' : theme === 'wood' ? 'border-amber-600' : 'border-gray-400 animate-pulse'}`}></div>
+                                        <div className="relative">
+                                            <div className="relative group/avatar">
+                                                <div className={`w-24 h-24 bg-white shadow-xl flex items-center justify-center text-5xl mb-3 relative hover:scale-110 transition-transform cursor-pointer overflow-visible ring-4 ${theme === 'wood' ? 'ring-amber-900/20' : 'ring-indigo-500/10'} ${frames.find(f => f.id === frameId)?.style || 'rounded-full border-white'}`}>
+                                                    {avatars[avatarId]}
+                                                </div>
+                                                <div className="absolute -bottom-2 -right-2 bg-yellow-400 text-black p-2 rounded-full border-4 border-white shadow-sm text-sm font-bold cursor-pointer hover:scale-110 transition-transform z-10">
+                                                    ✏️
+                                                </div>
+                                                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-4 bg-white p-4 rounded-[2rem] shadow-2xl border-2 border-gray-100 w-[450px] z-[100] opacity-0 invisible group-hover/avatar:opacity-100 group-hover/avatar:visible transition-all flex flex-col gap-4">
+                                                    <div className="grid grid-cols-6 gap-2 max-h-48 overflow-y-auto custom-scrollbar p-1">
+                                                        {avatars.map((av, i) => (
+                                                            <button
+                                                                key={i}
+                                                                onClick={() => { soundManager.play('click'); setAvatarId(i); }}
+                                                                className={`w-12 h-12 flex items-center justify-center text-3xl rounded-xl hover:bg-gray-100 transition-colors ${avatarId === i ? 'bg-indigo-50 ring-2 ring-indigo-400 shadow-inner' : ''}`}
+                                                            >
+                                                                {av}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                    <div className="border-t pt-4 px-1">
+                                                        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4">Çerçeve Seç</div>
+                                                        <div className="flex gap-6 p-4 overflow-x-auto custom-scrollbar whitespace-nowrap min-h-[100px] items-center">
+                                                            {frames.map((f) => (
+                                                                <button
+                                                                    key={f.id}
+                                                                    onClick={() => { soundManager.play('click'); setFrameId(f.id); }}
+                                                                    className={`w-12 h-12 border-2 transition-all hover:scale-110 flex-shrink-0 flex items-center justify-center relative ${frameId === f.id ? 'ring-4 ring-indigo-500/30 scale-125 z-10' : ''} ${f.style}`}
+                                                                    style={{ borderColor: f.id === 'none' ? '#eee' : 'transparent', backgroundColor: 'white' }}
+                                                                    title={f.name}
+                                                                >
+                                                                    {f.id === 'none' ? '❌' : ''}
+                                                                    {frameId === f.id && <div className="absolute -top-1 -right-1 bg-indigo-500 w-3 h-3 rounded-full border border-white shadow-sm z-20"></div>}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <div className="absolute -bottom-2 -right-2 bg-yellow-400 text-black p-2 rounded-full border-4 border-white shadow-sm text-sm font-bold z-10">
-                                                ✏️
-                                            </div>
-                                            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-4 bg-white p-3 rounded-2xl shadow-2xl border-2 border-gray-100 w-80 max-h-64 overflow-y-auto z-[100] opacity-0 invisible group-hover/avatar:opacity-100 group-hover/avatar:visible transition-all grid grid-cols-5 gap-2 custom-scrollbar">
-                                                {avatars.map((av, i) => (
-                                                    <button
-                                                        key={i}
-                                                        onClick={() => { soundManager.play('click'); setAvatarId(i); }}
-                                                        className={`w-12 h-12 flex items-center justify-center text-3xl rounded-xl hover:bg-gray-100 transition-colors ${avatarId === i ? 'bg-indigo-50 ring-2 ring-indigo-400 shadow-inner' : ''}`}
-                                                    >
-                                                        {av}
-                                                    </button>
-                                                ))}
+                                            {/* Market Button - Outside Group Wrapper */}
+                                            <div
+                                                onClick={(e) => { e.stopPropagation(); soundManager.play('click'); setIsMarketOpen(true); }}
+                                                className="absolute top-1/2 -right-40 -translate-y-1/2 bg-indigo-600 text-white p-3 rounded-2xl border-4 border-white shadow-xl text-2xl font-bold cursor-pointer hover:scale-110 hover:rotate-12 transition-all flex items-center justify-center z-10"
+                                                title="Market"
+                                            >
+                                                🛒
                                             </div>
                                         </div>
 
@@ -458,7 +517,7 @@ function HomeContent() {
                                                     disabled={!isConnected}
                                                     className={`w-full bg-gradient-to-r ${currentTheme.button} hover:brightness-110 text-white font-black text-2xl py-6 rounded-3xl shadow-[0_10px_20px_rgba(0,0,0,0.2)] border-b-8 ${currentTheme.border} active:border-b-0 active:translate-y-2 transition-all flex items-center justify-center gap-3 ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
                                                 >
-                                                    <span>🚀</span> {t("create_room")}
+                                                    {t("create_room")}
                                                 </button>
                                             </div>
                                         ) : (
@@ -480,7 +539,7 @@ function HomeContent() {
                                                             disabled={!isConnected}
                                                             className={`w-full bg-gradient-to-r ${currentTheme.button} hover:brightness-110 text-white font-black text-2xl py-6 rounded-3xl shadow-[0_10px_20px_rgba(0,0,0,0.2)] border-b-8 ${currentTheme.border} active:border-b-0 active:translate-y-2 transition-all flex items-center justify-center gap-3 ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
                                                         >
-                                                            <span>📥</span> {t("join_room")}
+                                                            {t("join_room")}
                                                         </button>
                                                     </div>
                                                 </div>
@@ -551,13 +610,146 @@ function HomeContent() {
                         © {new Date().getFullYear()} Okey.io
                     </div>
                 </div>
-            </motion.div >
-        </AnimatePresence >
+            </motion.div>
+
+            {/* --- Market / Customization Modal --- */}
+            <AnimatePresence key="market-presence">
+                {isMarketOpen && (
+                    <div key="market-modal-container" className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+                        <motion.div
+                            key="market-modal-overlay"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setIsMarketOpen(false)}
+                            className="absolute inset-0 bg-black/60 backdrop-blur-md"
+                        />
+                        <motion.div
+                            key="market-modal-content"
+                            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                            className="relative bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl overflow-hidden border-b-8 border-gray-200"
+                        >
+                            {/* Modal Header */}
+                            <div className={`p-8 bg-gradient-to-r ${currentTheme.button} text-white flex justify-between items-center`}>
+                                <div>
+                                    <h2 className="text-3xl font-black tracking-tight">Özelleştirme Mağazası</h2>
+                                    <p className="opacity-80 font-bold text-sm">Oyun deneyimini kendine göre ayarla</p>
+                                </div>
+                                <button
+                                    onClick={() => setIsMarketOpen(false)}
+                                    className="w-12 h-12 bg-black/20 hover:bg-black/40 rounded-full flex items-center justify-center text-2xl transition-all hover:rotate-90"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            {/* Modal Content */}
+                            <div className="p-8 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    {/* Table Themes */}
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                            <span className="w-8 h-8 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center">🎨</span>
+                                            Masa Teması
+                                        </h3>
+                                        <div className="grid grid-cols-3 gap-3">
+                                            {[
+                                                { id: 'green', icon: '🟢', label: 'Yeşil', locked: false },
+                                                { id: 'marble', icon: '💎', label: 'Mermer', locked: true },
+                                                { id: 'neon', icon: '🌈', label: 'Neon', locked: true }
+                                            ].map((t) => (
+                                                <button
+                                                    key={t.id}
+                                                    onClick={() => { if (!t.locked) { soundManager.play('click'); setTableTheme(t.id as any); } else { soundManager.play('error'); } }}
+                                                    className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all hover:scale-105 relative
+                                                        ${tableTheme === t.id ? 'border-indigo-500 bg-indigo-50 shadow-inner' : 'border-gray-100 hover:bg-gray-50'}`}
+                                                >
+                                                    {t.locked && <div className="absolute top-1 right-1 text-[10px] bg-black/60 text-white p-1 rounded-full">🔒</div>}
+                                                    <span className={`text-3xl ${t.locked ? 'grayscale opacity-50' : ''}`}>{t.icon}</span>
+                                                    <span className="text-xs font-bold text-gray-500">{t.label}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Tile Designs */}
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                            <span className="w-8 h-8 bg-orange-100 text-orange-600 rounded-lg flex items-center justify-center">🀄</span>
+                                            Taş Tasarımı
+                                        </h3>
+                                        <div className="grid grid-cols-3 gap-3">
+                                            {[
+                                                { id: 'classic', label: 'Klasik', locked: false },
+                                                { id: 'modern', label: 'Modern', locked: true }
+                                            ].map((d) => (
+                                                <button
+                                                    key={d.id}
+                                                    onClick={() => { if (!d.locked) { soundManager.play('click'); setTileDesign(d.id as any); } else { soundManager.play('error'); } }}
+                                                    className={`flex flex-col items-center gap-4 p-4 rounded-3xl border-2 transition-all hover:scale-105 relative
+                                                        ${tileDesign === d.id ? 'border-orange-500 bg-orange-50 shadow-inner' : 'border-gray-100 hover:bg-gray-50'}`}
+                                                >
+                                                    {d.locked && <div className="absolute top-1 right-1 text-[10px] bg-black/60 text-white p-1 rounded-full z-10">🔒</div>}
+                                                    <div className={`transform scale-75 md:scale-90 pointer-events-none ${d.locked ? 'grayscale opacity-50' : ''}`}>
+                                                        <Tile color="red" value={7} design={d.id as any} size="md" />
+                                                    </div>
+                                                    <span className="text-xs font-bold text-gray-500">{d.label}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Table Patterns */}
+                                    <div className="space-y-4 md:col-span-2">
+                                        <h3 className="text-lg font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                            <span className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center">✨</span>
+                                            Masa Deseni
+                                        </h3>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            {[
+                                                { id: 'none', icon: '🚫', label: 'Yok', locked: false },
+                                                { id: 'geometric', icon: '📐', label: 'Geometrik', locked: true },
+                                                { id: 'floral', icon: '🌸', label: 'Çiçekli', locked: true },
+                                                { id: 'minimalist', icon: '▫️', label: 'Minimal', locked: true }
+                                            ].map((p) => (
+                                                <button
+                                                    key={p.id}
+                                                    onClick={() => { if (!p.locked) { soundManager.play('click'); setTablePattern(p.id as any); } else { soundManager.play('error'); } }}
+                                                    className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all hover:scale-105 relative
+                                                        ${tablePattern === p.id ? 'border-blue-500 bg-blue-50 shadow-inner' : 'border-gray-100 hover:bg-gray-50'}`}
+                                                >
+                                                    {p.locked && <div className="absolute top-1 right-1 text-[10px] bg-black/60 text-white p-1 rounded-full">🔒</div>}
+                                                    <span className={`text-3xl ${p.locked ? 'grayscale opacity-50' : ''}`}>{p.icon}</span>
+                                                    <span className="text-xs font-bold text-gray-500">{p.label}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div className="p-8 bg-gray-50 flex justify-center">
+                                <button
+                                    onClick={() => setIsMarketOpen(false)}
+                                    className={`px-12 py-4 bg-gradient-to-r ${currentTheme.button} text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all outline-none`}
+                                >
+                                    TAMAM
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+        </>
     );
 }
+
 export default function Home() {
     return (
-        <Suspense fallback={<div className="min-h-screen bg-[#0f0c29] flex items-center justify-center text-white font-bold text-2xl">...</div>}>
+        <Suspense fallback={<div className="h-screen w-screen bg-[#0f0c29] flex items-center justify-center text-white font-black text-2xl animate-pulse">YÜKLENİYOR...</div>}>
             <HomeContent />
         </Suspense>
     );

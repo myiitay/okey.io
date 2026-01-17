@@ -1,36 +1,23 @@
 import { Server, Socket } from 'socket.io';
-import { OkeyGame, GameState } from './OkeyGame';
+import { OkeyGame } from './OkeyGame';
+import { Game101 } from './Game101';
+import { GameState, RoomSettings, Player as SharedPlayer, RoomData, CreateRoomSchema, JoinRoomSchema, GameState101 } from '@okey/shared';
 import { randomUUID } from 'crypto';
+
+interface Player extends SharedPlayer {
+    reconnectTimer?: NodeJS.Timeout;
+}
 
 interface Room {
     id: string;
     players: Player[];
-    game?: OkeyGame;
+    game?: OkeyGame | Game101;
     maxPlayers: number;
     winScores: Map<string, number>; // Name -> Score
     restartVotes: Set<string>; // Socket ID
     gameMode?: '101' | 'standard'; // Game mode
     spectators: Player[];
     settings: RoomSettings;
-}
-
-interface RoomSettings {
-    turnTime: number; // in seconds
-    targetScore: number;
-    isPublic: boolean;
-}
-
-interface Player {
-    id: string; // Socket ID (Transient)
-    token: string; // Permanent Session ID
-    name: string;
-    avatar: string;
-    roomId?: string;
-    connected: boolean;
-    disconnectTime?: number;
-    reconnectTimer?: NodeJS.Timeout;
-    isBot?: boolean;
-    isReady?: boolean; // For waiting room
 }
 
 export class RoomManager {
@@ -116,23 +103,22 @@ export class RoomManager {
             socket.emit('forceRedirect', '/');
         });
 
-        socket.on('createRoom', (payload: { name: string, avatar?: string, gameMode?: '101' | 'standard' } | string) => {
-            let name = "";
-            let avatar = "👤"; // Default
-            let gameMode: '101' | 'standard' = 'standard'; // Default
-
+        socket.on('createRoom', (payload: any) => {
+            let rawData = payload;
             if (typeof payload === 'string') {
-                name = payload;
-            } else if (payload && typeof payload === 'object') {
-                name = payload.name;
-                if (payload.avatar) avatar = payload.avatar;
-                if (payload.gameMode) gameMode = payload.gameMode;
+                rawData = { name: payload };
             }
 
-            if (!name) {
-                socket.emit('error', 'Nickname is required');
+            const result = CreateRoomSchema.safeParse(rawData);
+            if (!result.success) {
+                socket.emit('error', result.error.issues[0].message);
                 return;
             }
+
+            const { name, avatar: rawAvatar, frameId: rawFrameId, gameMode: rawGameMode } = result.data;
+            const avatar = rawAvatar || "👤";
+            const frameId = rawFrameId || "none";
+            const gameMode = rawGameMode || 'standard';
 
             // --- LEAK PREVENTION: Remove from old room if any ---
             const existingPlayer = this.players.get(socket.id);
@@ -150,7 +136,9 @@ export class RoomManager {
                 token,
                 name,
                 avatar,
-                connected: true
+                frameId,
+                connected: true,
+                isReady: true // Host is always ready
             };
 
             this.sessions.set(token, newPlayer);
@@ -167,8 +155,9 @@ export class RoomManager {
                 spectators: [],
                 settings: {
                     turnTime: 30,
-                    targetScore: 20,
-                    isPublic: true
+                    targetScore: 3,
+                    isPublic: true,
+                    isPaired: false
                 }
             };
 
@@ -188,7 +177,7 @@ export class RoomManager {
             if (room) {
                 socket.emit('updateRoom', this.getRoomData(code));
             } else {
-                socket.emit('error', 'Room not found');
+                socket.emit('error', 'Oda bulunamadı');
             }
         });
 
@@ -197,12 +186,17 @@ export class RoomManager {
         });
 
 
-        socket.on('joinRoom', (payload: { code: string, name: string, avatar?: string }) => {
-            const { code, name, avatar } = payload;
+        socket.on('joinRoom', (payload: any) => {
+            const result = JoinRoomSchema.safeParse(payload);
+            if (!result.success) {
+                socket.emit('error', result.error.issues[0].message);
+                return;
+            }
+            const { code, name, avatar, frameId } = result.data;
             const room = this.rooms.get(code);
 
             if (!room) {
-                socket.emit('error', 'Room not found');
+                socket.emit('error', 'Oda bulunamadı');
                 return;
             }
 
@@ -211,8 +205,9 @@ export class RoomManager {
                 const spectator: Player = {
                     id: socket.id,
                     token: randomUUID(),
-                    name: name + " (İzleyici)",
+                    name: name + (socket.handshake.query.lang === 'en' ? " (Spectator)" : " (İzleyici)"),
                     avatar: avatar || "👤",
+                    frameId: frameId,
                     connected: true,
                     roomId: code
                 };
@@ -226,7 +221,7 @@ export class RoomManager {
             }
 
             if (room.game) {
-                socket.emit('error', 'Game already started');
+                socket.emit('error', 'Oyun zaten başladı');
                 return;
             }
 
@@ -246,6 +241,7 @@ export class RoomManager {
                 token,
                 name,
                 avatar: avatar || "👤",
+                frameId,
                 connected: true,
                 roomId: code
             };
@@ -271,23 +267,27 @@ export class RoomManager {
 
             // Only host can add bots (Host is index 0)
             if (room.players[0].token !== player.token) {
-                socket.emit('error', 'Only host can add bots.');
+                socket.emit('error', 'Sadece kurucu bot ekleyebilir.');
                 return;
             }
 
             if (room.players.length >= room.maxPlayers) {
-                socket.emit('error', 'Room is full');
+                socket.emit('error', 'Oda dolu');
                 return;
             }
 
             const botId = `bot_${randomUUID()}`;
-            const botAvatars = ["🤖", "🦾", "🦿", "📡", "🛰️", "🛸"];
-            const botNames = ["Robot-1", "Bot-Alpha", "Okey-X", "Mech", "Cypher", "Turbo"];
+            const botAvatars = ["👨🏻‍🌾", "👴🏻", "👨🏻", "🧔🏻", "👳🏻‍♂️", "👨🏽‍🌾", "👴🏽", "👨🏽", "👳🏽‍♂️"];
+            const botNames = [
+                "İdris Amca", "Hamit Dayı", "Abdullah Efendi", "Abidin Başgan",
+                "Yakup Emmi", "Osman Ağa", "Recep Dayı", "Şaban Emmi",
+                "Ramazan Usta", "Bekir Ortak", "Cemal Dayı", "Dursun Abi"
+            ];
 
             const botPlayer: Player = {
                 id: botId,
                 token: botId,
-                name: botNames[Math.floor(Math.random() * botNames.length)] + "_" + Math.floor(Math.random() * 100),
+                name: botNames[Math.floor(Math.random() * botNames.length)],
                 avatar: botAvatars[Math.floor(Math.random() * botAvatars.length)],
                 connected: true,
                 roomId: room.id,
@@ -317,7 +317,7 @@ export class RoomManager {
 
             // Only host can kick (Host is index 0)
             if (room.players[0].token !== player.token) {
-                socket.emit('error', 'Only host can kick players.');
+                socket.emit('error', 'Sadece kurucu oyuncu atabilir.');
                 return;
             }
             if (targetId === player.id) return;
@@ -338,25 +338,25 @@ export class RoomManager {
             if (!room) return;
 
             if (room.players[0].token !== player.token) {
-                socket.emit('error', 'Only the host can start the game');
+                socket.emit('error', 'Sadece kurucu oyunu başlatabilir');
                 return;
             }
 
             if (room.players.length !== 2 && room.players.length !== 4) {
-                socket.emit('error', 'Game requires exactly 2 or 4 players');
+                socket.emit('error', 'Oyun için tam olarak 2 veya 4 oyuncu gerekiyor');
                 return;
             }
 
             // Check if all players (inclusive) are ready
-            // Bots are always ready.
-            const allReady = room.players.every(p => p.isReady || p.isBot);
+            // Bots are always ready. Host (index 0) is always ready since they click start.
+            const allReady = room.players.every((p, idx) => idx === 0 || p.isReady || p.isBot);
             if (!allReady) {
-                socket.emit('error', 'Everyone must be ready to start!');
+                socket.emit('error', 'Başlamak için herkesin hazır olması gerekiyor!');
                 return;
             }
 
             if (room.game) {
-                socket.emit('error', 'Game already started');
+                socket.emit('error', 'Oyun zaten başladı');
                 return;
             }
 
@@ -439,7 +439,7 @@ export class RoomManager {
 
             // Only host can update settings
             if (room.players[0].id !== player.id) {
-                socket.emit('error', 'Only host can update settings');
+                socket.emit('error', 'Sadece kurucu ayarları güncelleyebilir');
                 return;
             }
 
@@ -458,6 +458,16 @@ export class RoomManager {
                 playerId: player.id,
                 emote: emote
             });
+        });
+
+        socket.on('joinTeam', (team: 1 | 2) => {
+            const player = this.players.get(socket.id);
+            if (!player || !player.roomId) return;
+            const room = this.rooms.get(player.roomId);
+            if (!room || room.game) return;
+
+            player.team = team;
+            this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
         });
 
         socket.on('disconnect', () => {
@@ -589,10 +599,12 @@ export class RoomManager {
                 name: p.name,
                 id: p.id,
                 avatar: p.avatar,
+                frameId: p.frameId,
                 readyToRestart: room.restartVotes?.has(p.id) || false,
                 connected: p.connected, // Send connection status
                 isReady: p.isReady,
-                isBot: p.isBot
+                isBot: p.isBot,
+                team: p.team
             })),
             winScores: room.winScores ? Object.fromEntries(room.winScores) : {},
             restartCount: room.restartVotes?.size || 0,
@@ -602,12 +614,12 @@ export class RoomManager {
         };
     }
 
-    private sanitizeGameState(state: GameState, targetPlayerId: string): GameState {
+    private sanitizeGameState(state: GameState | GameState101, targetPlayerId: string): GameState | GameState101 {
         // Optimization: Shallow copy root, reconstruct players array.
         // Avoid JSON.parse/stringify for better performance.
-        return {
+        const sanitizedParams: any = {
             ...state, // Shallow copy primitives
-            players: state.players.map(p => {
+            players: state.players.map((p: any) => {
                 if (p.id !== targetPlayerId && targetPlayerId !== "SPECTATOR") { // Spectator sees hidden
                     // NOTE: "SPECTATOR" should theoretically see everything if we want? 
                     // But usually spectators shouldn't see hands either to prevent cheating via dual screen.
@@ -622,10 +634,11 @@ export class RoomManager {
                 // If it IS the player, return full object (or shallow copy if we mutate later, but we don't)
                 return p;
             })
-        };
+        }
+        return sanitizedParams;
     }
 
-    private broadcastGameState(roomId: string, state: GameState, eventName: string = 'gameState') {
+    private broadcastGameState(roomId: string, state: GameState | GameState101, eventName: string = 'gameState') {
         const room = this.rooms.get(roomId);
         if (!room) return;
 
@@ -644,13 +657,20 @@ export class RoomManager {
             }
         });
 
-        // --- BOT LOGIC TRIGGER ---
+        // --- BOT / AFK LOGIC TRIGGER ---
         if (state.status === 'PLAYING') {
             const currentPlayerId = state.players[state.turnIndex].id;
-            const currentPlayer = room.players.find(p => p.id === currentPlayerId);
+            const roomPlayer = room.players.find(p => p.id === currentPlayerId);
 
-            if (currentPlayer && currentPlayer.isBot) {
-                this.triggerBotMove(roomId, currentPlayerId);
+            if (roomPlayer) {
+                if (roomPlayer.isBot) {
+                    this.triggerBotMove(roomId, currentPlayerId);
+                } else if (!roomPlayer.connected) {
+                    // Disconnected player takeover logic: 
+                    // Wait a bit (grace period) then bot takes one turn
+                    console.log(`[Takeover] Triggering bot takeover for disconnected player ${roomPlayer.name}`);
+                    this.triggerBotMove(roomId, currentPlayerId, 10000); // 10s grace period
+                }
             }
         }
     }
@@ -680,38 +700,121 @@ export class RoomManager {
 
         console.log(`Starting game in room ${room.id} (Internal Trigger)`);
         try {
-            room.game = new OkeyGame(room.players.map(p => p.id), (gameState: GameState) => {
-                // Win detection reuse
-                if (gameState.status === 'FINISHED' && gameState.winnerId) {
-                    const winner = room.players.find(p => p.id === gameState.winnerId);
-                    if (winner) {
-                        const currentScore = room.winScores.get(winner.name) || 0;
-                        room.winScores.set(winner.name, currentScore + 1);
-                        this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
-                    }
-                } else if (gameState.status === 'FINISHED' && !gameState.winnerId) {
-                    // Draw logic
-                    console.log(`[RoomManager] Game in room ${room.id} ended in a draw.`);
-                    const drawMsg = {
-                        sender: 'Sistem',
-                        text: 'Oyun berabere bitti! Bütün taşlar tükendi.',
-                        time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-                        isSystem: true
-                    };
-                    this.io.to(room.id).emit('chatMessage', drawMsg);
-                }
-                this.broadcastGameState(room.id, gameState);
+            let playerOrder = room.players;
 
-                if (gameState.status === 'FINISHED') {
-                    room.players.forEach(p => {
-                        if (p.isBot) {
-                            room.restartVotes.add(p.id);
-                        }
-                    });
-                    this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
-                    this.checkRestartCondition(room);
+            if (room.settings.isPaired) {
+                // For paired game, we need 4 players and they must have teams
+                // We'll auto-assign teams if they are missing
+                if (room.players.length !== 4) {
+                    throw new Error("Eşli oyun için 4 oyuncu gereklidir.");
                 }
-            });
+
+                const team1 = room.players.filter(p => p.team === 1);
+                const team2 = room.players.filter(p => p.team === 2);
+                const undelared = room.players.filter(p => !p.team);
+
+                // Auto balance teams if anyone hasn't chosen
+                undelared.forEach(p => {
+                    if (team1.length < 2) {
+                        p.team = 1;
+                        team1.push(p);
+                    } else {
+                        p.team = 2;
+                        team2.push(p);
+                    }
+                });
+
+                if (team1.length !== 2 || team2.length !== 2) {
+                    throw new Error("Takımlar dengeli değil (2 vs 2 olmalı).");
+                }
+
+                // Arrange: Team1[0], Team2[0], Team1[1], Team2[1]
+                playerOrder = [team1[0], team2[0], team1[1], team2[1]];
+            }
+
+            if (room.gameMode === '101') {
+                room.game = new Game101(playerOrder.map(p => p.id), (gameState: GameState101) => {
+                    // Win detection reuse
+                    if (gameState.status === 'FINISHED' && gameState.winnerId) {
+                        const winner = room.players.find(p => p.id === gameState.winnerId);
+                        if (winner) {
+                            if (room.settings.isPaired && winner.team) {
+                                // Team win
+                                const teamName = `Team ${winner.team}`;
+                                const currentScore = room.winScores.get(teamName) || 0;
+                                room.winScores.set(teamName, currentScore + 1);
+                            } else {
+                                // Individual win
+                                const currentScore = room.winScores.get(winner.name) || 0;
+                                room.winScores.set(winner.name, currentScore + 1);
+                            }
+                            this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+                        }
+                    } else if (gameState.status === 'FINISHED' && !gameState.winnerId) {
+                        // Draw logic
+                        console.log(`[RoomManager] Game in room ${room.id} ended in a draw.`);
+                        const drawMsg = {
+                            sender: 'Sistem',
+                            text: 'Oyun berabere bitti! Bütün taşlar tükendi.',
+                            time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                            isSystem: true
+                        };
+                        this.io.to(room.id).emit('chatMessage', drawMsg);
+                    }
+                    this.broadcastGameState(room.id, gameState);
+
+                    if (gameState.status === 'FINISHED') {
+                        room.players.forEach(p => {
+                            if (p.isBot) {
+                                room.restartVotes.add(p.id);
+                            }
+                        });
+                        this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+                        this.checkRestartCondition(room);
+                    }
+                });
+            } else {
+                room.game = new OkeyGame(playerOrder.map(p => p.id), (gameState: GameState) => {
+                    // Win detection reuse
+                    if (gameState.status === 'FINISHED' && gameState.winnerId) {
+                        const winner = room.players.find(p => p.id === gameState.winnerId);
+                        if (winner) {
+                            if (room.settings.isPaired && winner.team) {
+                                // Team win
+                                const teamName = `Team ${winner.team}`;
+                                const currentScore = room.winScores.get(teamName) || 0;
+                                room.winScores.set(teamName, currentScore + 1);
+                            } else {
+                                // Individual win
+                                const currentScore = room.winScores.get(winner.name) || 0;
+                                room.winScores.set(winner.name, currentScore + 1);
+                            }
+                            this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+                        }
+                    } else if (gameState.status === 'FINISHED' && !gameState.winnerId) {
+                        // Draw logic
+                        console.log(`[RoomManager] Game in room ${room.id} ended in a draw.`);
+                        const drawMsg = {
+                            sender: 'Sistem',
+                            text: 'Oyun berabere bitti! Bütün taşlar tükendi.',
+                            time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                            isSystem: true
+                        };
+                        this.io.to(room.id).emit('chatMessage', drawMsg);
+                    }
+                    this.broadcastGameState(room.id, gameState);
+
+                    if (gameState.status === 'FINISHED') {
+                        room.players.forEach(p => {
+                            if (p.isBot) {
+                                room.restartVotes.add(p.id);
+                            }
+                        });
+                        this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+                        this.checkRestartCondition(room);
+                    }
+                });
+            }
 
             const initialState = room.game.start();
             room.restartVotes.clear();
@@ -725,12 +828,12 @@ export class RoomManager {
         }
     }
 
-    private async triggerBotMove(roomId: string, botId: string) {
+    private async triggerBotMove(roomId: string, botId: string, delay: number = 2000) {
         const room = this.rooms.get(roomId);
         if (!room || !room.game) return;
 
-        // Wait a bit for "thinking"
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait a bit for "thinking" or grace period
+        await new Promise(resolve => setTimeout(resolve, delay));
 
         try {
             const state = room.game.getFullState();

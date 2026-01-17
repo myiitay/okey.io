@@ -17,6 +17,7 @@ class HandValidator {
         // Handle Fake Okey: It becomes the "natural" identity of the Okey tile.
         const naturalOkeyColor = okeyTile.color;
         const naturalOkeyValue = okeyTile.value;
+        let hasJoker = false;
         const processedHand = hand.map(t => {
             let pColor = t.color;
             let pValue = t.value;
@@ -24,6 +25,7 @@ class HandValidator {
             // Is it a Joker (The actual Okey tile)?
             if (t.color === naturalOkeyColor && t.value === naturalOkeyValue) {
                 isJoker = true;
+                hasJoker = true;
             }
             // Is it a Fake Okey?
             if (t.color === 'fake') {
@@ -49,7 +51,8 @@ class HandValidator {
         // Optimization: Sort by color/value.
         const canPair = this.canFormPairs(processedHand);
         const canSet = this.canFormSets(processedHand);
-        return canSet || canPair;
+        const isValid = canSet || canPair;
+        return { isValid, usedJoker: hasJoker };
     }
     static canFormPairs(hand) {
         // Logic: 7 pairs.
@@ -143,10 +146,12 @@ class HandValidator {
         if (tiles.length === 0)
             return true;
         tiles.sort((a, b) => {
-            if (a.isJoker)
-                return 1; // Jokers at end
-            if (b.isJoker)
+            if (a.isJoker && !b.isJoker)
+                return 1;
+            if (!a.isJoker && b.isJoker)
                 return -1;
+            if (a.isJoker && b.isJoker)
+                return 0;
             if (a.value !== b.value)
                 return a.value - b.value;
             return a.color.localeCompare(b.color);
@@ -168,21 +173,11 @@ class HandValidator {
             if (this.solve(remaining))
                 return true;
         }
-        // 3. SPECIAL CASE: 12-13-1 Run
-        // Since we sort by value, '1' comes first. Standard 'findPossibleRuns' looks for 1-2-3.
-        // It misses 12-13-1 because 1 is processed before 12 and 13.
-        // We explicitly check if this '1' can complete a 12-13-1 chain.
+        // 3. Try Wrapping Run ending in 1 (e.g., 11-12-13-1)
         if (current.value === 1 && !current.isJoker) {
-            const sameColor13 = rest.find(t => t.value === 13 && t.color === current.color && !t.isJoker);
-            const sameColor12 = rest.find(t => t.value === 12 && t.color === current.color && !t.isJoker);
-            if (sameColor13 && sameColor12) {
-                // We found a strict 12-13-1. 
-                // (Note: This simple check ignores Jokers taking place of 12 or 13, 
-                // but for MVP this covers the most common failure case. 
-                // enhancing to support Joker-13-1 or 12-Joker-1 would require more complex lookups 
-                // but let's add basic support first).
-                const group13_12 = [current, sameColor13, sameColor12];
-                const remaining = this.removeTiles(tiles, group13_12);
+            const wrapRuns = this.findWrappingRunsEndingInOne(current, rest);
+            for (const run of wrapRuns) {
+                const remaining = this.removeTiles(tiles, run);
                 if (this.solve(remaining))
                     return true;
             }
@@ -238,47 +233,51 @@ class HandValidator {
         if (start.isJoker)
             return [];
         const results = [];
-        // Run: Same color. Consec values.
-        // We need next values: start.value+1, +2...
-        // Special case: 13 -> 1.
-        // Search depth: up to 14? Usually sets stop around 4-5 naturally, but can be 14.
-        // We just iterate trying to extend.
-        const tryExtend = (currentChain, needValue) => {
+        const tryExtend = (currentChain, nextValue, hasWrapped) => {
             if (currentChain.length >= 3) {
                 results.push([...currentChain]);
             }
-            // Try to find a tile for 'needValue'
-            // Wrap 13->1
-            if (needValue > 13)
-                needValue = 1;
-            // Find in pool
-            // Candidates: (Same color AND Value == needValue) OR Joker
-            // Use local pool (excluding used)
-            // But 'pool' argument is fixed. We need to check if used.
-            // Actually, we pass 'pool' which are available tiles.
-            // Optimization: Just find ONE valid extension per step? 
-            // If we have duplicate 7-Red, we might need branching? 
-            // In Okey standard set/run finding, usually duplicates are redundant for the *same* run.
-            // But we might use one 7-Red for a pair and another for a run?
-            // Yes, so we should try all instances.
-            const candidates = pool.filter(t => !currentChain.includes(t) && // Not already used in this chain
-                (t.isJoker || (t.color === start.color && t.value === needValue)));
-            if (candidates.length === 0)
+            // In standard Okey, a wrap-around run ending in 1 is terminal. (e.g., 12-13-1)
+            // It cannot be continued with 2.
+            if (hasWrapped && currentChain[currentChain.length - 1].value === 1) {
                 return;
-            // For each valid next tile, recurse
-            // To avoid explosion, maybe we just pick Distinct candidates?
-            // If we have two Red-5s:
-            // Run Red-4, Red-5(A)...
-            // Run Red-4, Red-5(B)... 
-            // Yes need to branch.
-            // Limit depth to avoid infinite loop with jokers? 13 is max run.
-            if (currentChain.length >= 13)
-                return;
+            }
+            let effectiveNextValue = nextValue;
+            let willWrap = hasWrapped;
+            if (effectiveNextValue > 13) {
+                if (willWrap)
+                    return; // Cannot wrap twice
+                effectiveNextValue = 1;
+                willWrap = true;
+            }
+            const candidates = pool.filter(t => !currentChain.some(c => c.id === t.id) &&
+                (t.isJoker || (t.color === start.color && t.value === effectiveNextValue)));
             for (const next of candidates) {
-                tryExtend([...currentChain, next], needValue + 1);
+                tryExtend([...currentChain, next], effectiveNextValue + 1, willWrap);
             }
         };
-        tryExtend([start], start.value + 1);
+        tryExtend([start], start.value + 1, false);
+        return results;
+    }
+    static findWrappingRunsEndingInOne(oneTile, pool) {
+        const results = [];
+        // We are at '1'. We want to find chains like [..., 11, 12, 13, 1]
+        // Search backwards: 1 -> 13 -> 12 -> 11 ...
+        const tryExtendBackwards = (currentChain, nextNeededValue) => {
+            if (currentChain.length >= 3) {
+                results.push([...currentChain]);
+            }
+            // Standard Okey runs don't typically go below length 3,
+            // but we can have 11-12-13-1 (len 4), 10-11-12-13-1 (len 5) etc.
+            if (nextNeededValue < 1)
+                return;
+            const candidates = pool.filter(t => !currentChain.some(c => c.id === t.id) &&
+                (t.isJoker || (t.color === oneTile.color && t.value === nextNeededValue)));
+            for (const prev of candidates) {
+                tryExtendBackwards([...currentChain, prev], nextNeededValue - 1);
+            }
+        };
+        tryExtendBackwards([oneTile], 13);
         return results;
     }
 }

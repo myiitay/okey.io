@@ -21,9 +21,10 @@ import {
 import { useLanguage } from "@/contexts/LanguageContext";
 import { motion, AnimatePresence } from 'framer-motion';
 import { TileData, GameState, RoomData } from './game/types';
-import { arrangeByGroups, arrangeByColor, arrangeByValue, arrangeByPotential } from '../utils/gameLogics';
+import { arrangeByGroups, arrangeByColor, arrangeByValue, arrangeByPotential, arrangeByPairs } from '../utils/gameLogics';
 // Imports for extracted components
-import { DraggableTile, Tile } from './game/DraggableTile';
+import { DraggableTile } from './game/DraggableTile';
+import { Tile } from './Tile';
 import { PlayerAvatar } from './game/PlayerAvatar';
 import { OpponentRack } from './game/OpponentRack';
 import { Chat } from './game/Chat';
@@ -134,12 +135,56 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
     // Discard Animation States
     const [isArranging, setIsArranging] = useState(false);
-    const [arrangeMode, setArrangeMode] = useState<'groups' | 'color' | 'value' | 'potential'>('groups');
+    const [arrangeMode, setArrangeMode] = useState<'groups' | 'color' | 'value' | 'potential' | 'pairs'>('groups');
     const [roomData, setRoomData] = useState<RoomData | null>(null);
     const { t } = useLanguage();
     const [disconnectedPlayers, setDisconnectedPlayers] = useState<Set<string>>(new Set());
     const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
     const [isAutoArrangeVisible, setIsAutoArrangeVisible] = useState(true);
+    const [emotes, setEmotes] = useState<{ id: number, playerId: string, emote: string, text?: string }[]>([]);
+    const [isEmotePanelOpen, setIsEmotePanelOpen] = useState(false);
+    const [winNotification, setWinNotification] = useState<{ playerName: string, winType: 'normal' | 'double', team?: 1 | 2 } | null>(null);
+
+    // Table Customization States
+    const [tableTheme, setTableTheme] = useState<'green' | 'marble' | 'neon'>('green');
+    const [tablePattern, setTablePattern] = useState<'none' | 'geometric' | 'floral' | 'minimalist'>('none');
+    const [tileDesign, setTileDesign] = useState<'classic' | 'modern'>('classic');
+    const [isAvatarAnimated, setIsAvatarAnimated] = useState(false);
+
+    // Load customization on mount
+    useEffect(() => {
+        const theme = localStorage.getItem('okey_table_theme') as any;
+        const pattern = localStorage.getItem('okey_table_pattern') as any;
+        const design = localStorage.getItem('okey_tile_design') as any;
+        const anim = localStorage.getItem('okey_avatar_anim');
+
+        if (theme) setTableTheme(theme);
+        if (pattern) setTablePattern(pattern);
+        if (design) setTileDesign(design);
+        if (anim) setIsAvatarAnimated(anim === 'true');
+    }, []);
+
+    // Win notification effect
+    useEffect(() => {
+        if (gameState?.status === 'FINISHED' && gameState.winnerId && gameState.winType) {
+            const winnerInfo = playersMap[gameState.winnerId];
+            const winnerInRoom = roomData?.players.find(p => p.id === gameState.winnerId);
+            if (winnerInfo) {
+                setWinNotification({
+                    playerName: winnerInfo.name,
+                    winType: gameState.winType,
+                    team: winnerInRoom?.team
+                });
+                soundManager.play(gameState.winType === 'double' ? 'win' : 'game_start');
+
+                const timer = setTimeout(() => {
+                    setWinNotification(null);
+                }, 5000);
+
+                return () => clearTimeout(timer);
+            }
+        }
+    }, [gameState?.status, gameState?.winnerId, gameState?.winType, playersMap, roomData?.players]);
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -175,8 +220,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         socket.on('updateRoom', (data: RoomData) => {
             setRoomData(data);
             if (data.players) {
-                const pMap: Record<string, { name: string, avatar: string }> = {};
-                data.players.forEach((p) => { pMap[p.id] = { name: p.name, avatar: p.avatar }; });
+                const pMap: Record<string, { name: string, avatar: string, team?: 1 | 2 }> = {};
+                data.players.forEach((p) => { pMap[p.id] = { name: p.name, avatar: p.avatar, team: p.team }; });
                 setPlayersMap(pMap);
 
                 // Sync disconnected players from room data
@@ -350,8 +395,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
     // State for animations
 
+    const [reshuffleNotification, setReshuffleNotification] = useState(false);
+
     useEffect(() => {
         const onGameState = (state: GameState) => {
+            if (state.event === 'reshuffled') {
+                soundManager.play('shuffle');
+                setReshuffleNotification(true);
+                setTimeout(() => setReshuffleNotification(false), 4000);
+            }
             setGameState(state);
             const myIdx = state.players.findIndex(p => p.id === currentUser.id);
             if (myIdx !== -1) {
@@ -389,9 +441,13 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             // Suppress trivial errors from double-clicks or known states
             const suppressedErrors = [
                 "Did you already draw?",
+                "Zaten taş çektin mi?",
                 "Already drew",
+                "Zaten taş çektin",
                 "Not your turn",
-                "You must draw before discarding" // happens if drag too fast
+                "Sıra sende değil",
+                "You must draw before discarding",
+                "Taş atmadan önce taş çekmelisin"
             ];
 
             if (suppressedErrors.some(e => msg.includes(e))) {
@@ -406,10 +462,19 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
 
 
+        const onEmoteReceived = (data: { playerId: string, emote: string, text?: string }) => {
+            soundManager.play('click');
+            setEmotes(prev => [...prev, { id: Date.now() + Math.random(), playerId: data.playerId, emote: data.emote, text: data.text }]);
+            setTimeout(() => {
+                setEmotes(prev => prev.slice(1));
+            }, 3000);
+        };
+
         socket.on('gameState', onGameState);
         socket.on('gameStarted', onGameStarted);
         socket.on('playerLeft', onPlayerLeft);
         socket.on('error', onError);
+        socket.on('emoteReceived', onEmoteReceived);
 
         socket.emit('getGameState');
         socket.emit('checkRoom', roomCode);
@@ -419,6 +484,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             socket.off('gameStarted', onGameStarted);
             socket.off('playerLeft', onPlayerLeft);
             socket.off('error', onError);
+            socket.off('emoteReceived', onEmoteReceived);
         };
     }, [socket, currentUser.id, roomCode]); // Removed playersMap from dependencies
 
@@ -438,6 +504,9 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
         // 1. Drawing Logic (Drag from Deck/Left Pile to Rack or Slots)
         if ((activeId === 'deck-source' || activeId === 'left-pile-source')) {
+            // Cancel if dropped back to source
+            if (overId === activeId) return;
+
             if (overId.startsWith('slot-') || overId === 'rack-droppable') {
                 if (overId.startsWith('slot-')) {
                     setPendingDrawSlot(parseInt(overId.split('-')[1]));
@@ -484,6 +553,16 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         return <div ref={setNodeRef} className={`absolute inset-0 z-50 rounded-lg transition-colors ${isOver ? 'bg-yellow-400/20 ring-4 ring-yellow-400' : ''}`} />;
     };
 
+    const DeckDroppable = () => {
+        const { setNodeRef } = useDroppable({ id: 'deck-source' });
+        return <div ref={setNodeRef} className="absolute inset-x-[-20%] inset-y-[-20%] z-0" />;
+    };
+
+    const LeftPileDroppable = () => {
+        const { setNodeRef } = useDroppable({ id: 'left-pile-source' });
+        return <div ref={setNodeRef} className="absolute inset-x-[-20%] inset-y-[-20%] z-0" />;
+    };
+
     // Droppable component for Indicator (Finish Game)
     const IndicatorDroppable = () => {
         const { setNodeRef, isOver } = useDroppable({ id: 'indicator-zone' });
@@ -508,7 +587,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         return (
             <div
                 ref={setNodeRef}
-                style={style}
                 {...listeners}
                 {...attributes}
                 className={`
@@ -516,8 +594,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     flex items-center justify-center transition-all duration-300 group
                     touch-none z-10
                     ${canDraw ? 'cursor-grab active:cursor-grabbing hover:scale-110' : ''}
-                    ${isDragging ? 'opacity-0' : 'opacity-100'}
                 `}>
+                <DeckDroppable />
                 <Tile isBack size="lg" className="shadow-2xl" />
                 <div className="absolute -top-3 -right-3 bg-red-600 text-white font-bold text-xs w-6 h-6 rounded-full flex items-center justify-center shadow-lg border border-white z-20">
                     {gameState.centerCount}
@@ -542,7 +620,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         });
 
         return (
-            <div className={`absolute left-0 flex flex-col items-center group transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
+            <div className={`absolute left-[-5px] flex flex-col items-center group transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
                 <div className="text-[10px] text-white/30 font-bold mb-2 uppercase tracking-tighter italic">{t("left_side_drag")}</div>
                 <div className="w-14 h-20 flex items-center justify-center relative">
                     {/* The tile underneath (visible when top tile is dragged) */}
@@ -559,6 +637,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                             {...attributes}
                             className={`relative group transition-all duration-300 touch-none ${canDraw ? 'cursor-grab active:cursor-grabbing' : ''} ${isDragging ? 'opacity-0' : 'opacity-100'}`}
                         >
+                            <LeftPileDroppable />
                             <div className={`transition-all duration-300 ${canDraw ? (is101Mode ? 'ring-4 ring-red-500 shadow-[0_0_30px_red]' : 'ring-4 ring-blue-500 shadow-[0_0_30px_blue]') : ''} rounded overflow-hidden`}>
                                 <Tile {...lastTile} size="md" className="shadow-lg" />
                             </div>
@@ -666,6 +745,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         socket.emit('restartVote');
     };
 
+    const handleSendEmote = (emoteKey: string, emoji: string) => {
+        soundManager.play('click');
+        socket.emit("sendEmote", emoji);
+        setIsEmotePanelOpen(false);
+    };
+
     const handleAutoArrange = () => {
         if (isArranging || !gameState) return;
         soundManager.play('click');
@@ -678,7 +763,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         }
 
         // Cycle to next mode
-        const modes: ('groups' | 'color' | 'value' | 'potential')[] = ['groups', 'color', 'value', 'potential'];
+        const modes: ('groups' | 'color' | 'value' | 'potential' | 'pairs')[] = ['groups', 'color', 'value', 'potential', 'pairs'];
         const currentIndex = modes.indexOf(arrangeMode);
         const nextMode = modes[(currentIndex + 1) % modes.length];
         setArrangeMode(nextMode);
@@ -706,6 +791,9 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 break;
             case 'potential':
                 newSlots = arrangeByPotential(normalTiles, okeyTiles, fakeJokers);
+                break;
+            case 'pairs':
+                newSlots = arrangeByPairs(normalTiles, okeyTiles, fakeJokers);
                 break;
         }
 
@@ -864,12 +952,51 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     const topPlayer = getRelativePlayer(2);
     const leftPlayer = getRelativePlayer(3);
 
+    const themeConfig = {
+        green: {
+            base: 'bg-[#1a3a2a]',
+            gradient: 'from-[#2d5a42] via-[#1a3a2a] to-[#0f241a]',
+            accent: 'bg-emerald-600/10',
+            texture: 'https://www.transparenttextures.com/patterns/felt.png',
+            vignette: 'bg-[radial-gradient(circle_at_center,transparent_20%,#000000_100%)]'
+        },
+        marble: {
+            base: 'bg-[#f0f4f8]',
+            gradient: 'from-[#ffffff] via-[#e2e8f0] to-[#cbd5e1]',
+            accent: 'bg-blue-400/5',
+            texture: 'https://www.transparenttextures.com/patterns/white-diamond.png',
+            vignette: 'bg-[radial-gradient(circle_at_center,transparent_40%,rgba(0,0,0,0.1)_100%)]'
+        },
+        neon: {
+            base: 'bg-[#0a0a1a]', // Deep space blue
+            gradient: 'from-[#1a1a2e] via-[#16213e] to-[#0f3460]',
+            accent: 'bg-purple-600/10',
+            texture: 'https://www.transparenttextures.com/patterns/carbon-fibre.png',
+            vignette: 'bg-[radial-gradient(circle_at_center,rgba(0,255,255,0.05)_0%,transparent_50%,#000000_100%)]'
+        }
+    }[tableTheme] || {
+        green: {
+            base: 'bg-[#1a3a2a]',
+            gradient: 'from-[#2d5a42] via-[#1a3a2a] to-[#0f241a]',
+            accent: 'bg-emerald-600/10',
+            texture: 'https://www.transparenttextures.com/patterns/felt.png',
+            vignette: 'bg-[radial-gradient(circle_at_center,transparent_20%,#000000_100%)]'
+        }
+    }.green;
+
+    const patternConfig = {
+        none: null,
+        geometric: 'https://www.transparenttextures.com/patterns/cubes.png',
+        floral: 'https://www.transparenttextures.com/patterns/skulls.png', // floral usually looks like skulls in this library for some reason, maybe 'flowers' is better
+        minimalist: 'https://www.transparenttextures.com/patterns/brushed-alum.png'
+    }[tablePattern];
+
     return (
-        <div className={`fixed inset-0 select-none overflow-hidden ${is101Mode ? 'bg-[#310000]' : 'bg-[#1a3a2a]'} perspective-1000 font-sans`}>
+        <div className={`fixed inset-0 select-none overflow-hidden ${is101Mode ? 'bg-[#310000]' : themeConfig.base} perspective-1000 font-sans`}>
             {/* Background Atmosphere - Dimmed during Intro */}
-            <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-[#4a0404] via-[#310000] to-[#1a0505]' : 'bg-gradient-to-br from-[#2d5a42] via-[#1a3a2a] to-[#0f241a]'} pointer-events-none opacity-40 transition-all duration-1000 ${isIntroRunning ? 'brightness-50' : ''}`}></div>
-            <div className={`absolute top-0 right-0 w-[800px] h-[800px] ${is101Mode ? 'bg-red-600/10' : 'bg-green-600/10'} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 ${isIntroRunning ? 'opacity-0' : 'opacity-100'}`}></div>
-            <div className={`absolute bottom-0 left-0 w-[800px] h-[800px] ${is101Mode ? 'bg-rose-600/10' : 'bg-emerald-600/10'} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 ${isIntroRunning ? 'opacity-0' : 'opacity-100'}`} style={{ animationDelay: "2s" }}></div>
+            <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-[#4a0404] via-[#310000] to-[#1a0505]' : `bg-gradient-to-br ${themeConfig.gradient}`} pointer-events-none transition-all duration-1000 ${isIntroRunning ? 'brightness-50' : 'opacity-60'}`}></div>
+            <div className={`absolute top-0 right-0 w-[800px] h-[800px] ${is101Mode ? 'bg-red-600/10' : themeConfig.accent} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 ${isIntroRunning ? 'opacity-0' : 'opacity-100'}`}></div>
+            <div className={`absolute bottom-0 left-0 w-[800px] h-[800px] ${is101Mode ? 'bg-rose-600/10' : themeConfig.accent} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 ${isIntroRunning ? 'opacity-0' : 'opacity-100'}`} style={{ animationDelay: "2s" }}></div>
 
             {/* Particle Atmosphere */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -911,7 +1038,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 onDragEnd={handleDragEnd}
             >
                 <DragOverlay dropAnimation={null}>
-                    <ActiveDragItem />
+                    <ActiveDragItem design={tileDesign} />
                 </DragOverlay>
 
                 <motion.div
@@ -936,9 +1063,9 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                         onClose={() => setIsLeaderboardOpen(false)}
                         players={roomData?.players || []}
                         winScores={roomData?.winScores || {}}
+                        isPaired={roomData?.settings?.isPaired}
                     />
-                    {/* Chat Component */}
-                    <Chat socket={socket} />
+
 
                     {/* Disconnect Notification */}
                     {disconnectMsg && (
@@ -950,11 +1077,62 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                         </div>
                     )}
 
+                    {/* Reshuffle Notification */}
+                    <AnimatePresence>
+                        {reshuffleNotification && (
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.8, y: -20 }}
+                                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] pointer-events-none"
+                            >
+                                <div className="bg-black/80 backdrop-blur-xl p-8 rounded-3xl border border-yellow-500/30 text-center shadow-[0_0_50px_rgba(234,179,8,0.3)]">
+                                    <div className="text-6xl mb-4 animate-[spin_3s_linear_infinite]">♻️</div>
+                                    <div className="text-yellow-400 font-bold text-2xl uppercase tracking-widest">
+                                        {t("deck_reshuffled") === "deck_reshuffled" ? "TAŞLAR KARIŞTIRILDI" : t("deck_reshuffled")}
+                                    </div>
+                                    <div className="text-white/60 text-sm mt-2 max-w-[300px]">
+                                        {t("deck_reshuffled_desc") === "deck_reshuffled_desc" ? "Yerdeki taşlar bitti, atılan taşlar toplanıp karıştırılarak yeni deste yapıldı." : t("deck_reshuffled_desc")}
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    {/* Win Notification */}
+                    <AnimatePresence>
+                        {winNotification && (
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.5, y: -100 }}
+                                animate={{ opacity: 1, scale: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.5, y: -100 }}
+                                className="absolute top-1/3 left-1/2 -translate-x-1/2 z-[200] pointer-events-none"
+                            >
+                                <div className={`${winNotification.winType === 'double' ? 'bg-gradient-to-r from-yellow-500 via-orange-500 to-red-500' : 'bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500'} p-8 rounded-3xl shadow-[0_20px_80px_rgba(0,0,0,0.5)] border-4 border-white/30`}>
+                                    <div className="text-center">
+                                        <div className="text-6xl mb-4 animate-bounce">
+                                            {winNotification.winType === 'double' ? '🔥' : '🎉'}
+                                        </div>
+                                        <div className="text-white font-black text-4xl mb-2 tracking-wider drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]">
+                                            {roomData?.settings.isPaired ? `${t("team") || "Takım"} ${winNotification.team} (${winNotification.playerName})` : winNotification.playerName}
+                                        </div>
+                                        <div className="text-white font-black text-5xl tracking-widest drop-shadow-[0_4px_12px_rgba(0,0,0,0.9)] animate-pulse">
+                                            {winNotification.winType === 'double' ? 'ÇİFTE BİTİRDİ!' : roomData?.settings.isPaired ? (t("victory") || 'KAZANDI!') : 'JOKERLE BİTİRDİ!'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
                     {/* --- ENVIRONMENT --- */}
                     {/* Table Texture */}
-                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/felt.png')] opacity-60 mix-blend-multiply pointer-events-none"></div>
+                    <div className="absolute inset-0 opacity-60 mix-blend-multiply pointer-events-none" style={{ backgroundImage: `url("${themeConfig.texture}")` }}></div>
+                    {patternConfig && (
+                        <div className="absolute inset-0 opacity-20 mix-blend-overlay pointer-events-none" style={{ backgroundImage: `url("${patternConfig}")` }}></div>
+                    )}
                     {/* Vignette */}
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_20%,#000000_100%)] opacity-60 pointer-events-none"></div>
+                    <div className={`absolute inset-0 ${themeConfig.vignette} opacity-60 pointer-events-none`}></div>
 
                     {/* Room Info */}
                     <div className="absolute top-4 left-4 z-50 flex gap-4 items-center">
@@ -963,15 +1141,56 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                             onClick={handleLeave}
                             className={`${is101Mode ? 'bg-red-700/80 hover:bg-red-600' : 'bg-red-600/80 hover:bg-red-600'} text-white px-4 py-2 rounded-lg font-bold shadow-lg backdrop-blur flex items-center gap-2 transition-transform hover:scale-105 active:scale-95`}
                         >
-                            <span>⬅</span> {t("exit")}
+                            {t("exit")}
                         </button>
 
                         <div className="bg-black/40 backdrop-blur-md px-4 py-2 rounded-lg text-white/80 font-mono text-sm border border-white/10 shadow-lg">
-                            Code: <span className="text-yellow-400 font-bold">{roomCode}</span>
+                            {t("room_code")}: <span className="text-yellow-400 font-bold">{roomCode}</span>
                         </div>
 
+                        <SoundToggle />
+                    </div>
 
-                    </div >
+                    {/* Quick Emotes Toggle & Panel */}
+                    <div className="absolute bottom-4 left-4 z-50 flex flex-col gap-3 items-center">
+                        <AnimatePresence>
+                            {isEmotePanelOpen && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: 20, scale: 0.8 }}
+                                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                                    exit={{ opacity: 0, y: 20, scale: 0.8 }}
+                                    className="bg-black/60 backdrop-blur-xl p-3 rounded-2xl border border-white/10 shadow-2xl flex flex-col gap-2"
+                                >
+                                    {[
+                                        { key: "emote_selam", icon: "👋" },
+                                        { key: "emote_luck", icon: "🍀" },
+                                        { key: "emote_congrats", icon: "👏" },
+                                        { key: "emote_thanks", icon: "🙏" },
+                                        { key: "emote_hurry", icon: "⚡" },
+                                        { key: "emote_hand", icon: "🃏" }
+                                    ].map((item) => (
+                                        <button
+                                            key={item.key}
+                                            onClick={() => handleSendEmote(item.key, item.icon)}
+                                            className="w-12 h-12 bg-white/10 rounded-xl hover:scale-125 transition-transform flex items-center justify-center text-2xl relative group/tooltip"
+                                        >
+                                            {item.icon}
+                                            <div className="absolute left-14 top-1/2 -translate-y-1/2 bg-black text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/tooltip:opacity-100 whitespace-nowrap pointer-events-none shadow-xl border border-white/10">
+                                                {t(item.key)}
+                                            </div>
+                                        </button>
+                                    ))}
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        <button
+                            onClick={() => { soundManager.play('click'); setIsEmotePanelOpen(!isEmotePanelOpen); }}
+                            className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl transition-all shadow-xl bg-black/40 backdrop-blur border border-white/10 hover:bg-black/60 hover:scale-110 active:scale-95 ${isEmotePanelOpen ? 'ring-2 ring-yellow-400' : ''}`}
+                        >
+                            😊
+                        </button>
+                    </div>
 
                     {/* Game End Overlay */}
                     {/* --- OPPONENTS --- */}
@@ -980,7 +1199,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     <div className="absolute top-8 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2 transition-opacity duration-500">
                         {topPlayer && (
                             <>
-                                <PlayerAvatar player={topPlayer} info={playersMap[topPlayer.id]} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} turnTimer={gameState.turnTimer} />
+                                <PlayerAvatar
+                                    player={topPlayer}
+                                    info={playersMap[topPlayer.id]}
+                                    position="top"
+                                    isDisconnected={disconnectedPlayers.has(topPlayer.id)}
+                                    isAnimated={isAvatarAnimated}
+                                    turnTimer={gameState.turnTimer}
+                                    activeEmote={emotes.find(e => e.playerId === topPlayer.id)}
+                                />
                                 <OpponentRack player={topPlayer} position="top" isDisconnected={disconnectedPlayers.has(topPlayer.id)} />
                             </>
                         )}
@@ -990,7 +1217,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     <div className="absolute left-[15%] top-1/2 -translate-y-1/2 z-10 flex flex-row items-center gap-6">
                         {leftPlayer && (
                             <div className="flex flex-col items-center gap-4">
-                                <PlayerAvatar player={leftPlayer} info={playersMap[leftPlayer.id]} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} turnTimer={gameState.turnTimer} />
+                                <PlayerAvatar
+                                    player={leftPlayer}
+                                    info={playersMap[leftPlayer.id]}
+                                    position="left"
+                                    isDisconnected={disconnectedPlayers.has(leftPlayer.id)}
+                                    isAnimated={isAvatarAnimated}
+                                    turnTimer={gameState.turnTimer}
+                                    activeEmote={emotes.find(e => e.playerId === leftPlayer.id)}
+                                />
                                 <div className="rotate-0 ml-0"> {/* Container tweak for vertical alignment */}
                                     <OpponentRack player={leftPlayer} position="left" isDisconnected={disconnectedPlayers.has(leftPlayer.id)} />
                                 </div>
@@ -1002,7 +1237,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     <div className="absolute right-[15%] top-1/2 -translate-y-1/2 z-10 flex flex-row-reverse items-center gap-6">
                         {rightPlayer && (
                             <div className="flex flex-col items-center gap-4">
-                                <PlayerAvatar player={rightPlayer} info={playersMap[rightPlayer.id]} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} turnTimer={gameState.turnTimer} />
+                                <PlayerAvatar
+                                    player={rightPlayer}
+                                    info={playersMap[rightPlayer.id]}
+                                    position="right"
+                                    isDisconnected={disconnectedPlayers.has(rightPlayer.id)}
+                                    isAnimated={isAvatarAnimated}
+                                    turnTimer={gameState.turnTimer}
+                                    activeEmote={emotes.find(e => e.playerId === rightPlayer.id)}
+                                />
                                 <div className="rotate-0 mr-0">
                                     <OpponentRack player={rightPlayer} position="right" isDisconnected={disconnectedPlayers.has(rightPlayer.id)} />
                                 </div>
@@ -1022,7 +1265,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                         <div className="absolute left-[60%] top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center group">
                             <div className="relative flex flex-col items-center">
                                 <IndicatorDroppable />
-                                <Tile {...gameState.indicator} size="md" className="rotate-3 shadow-2xl group-hover:rotate-0 transition-transform duration-500" />
+                                <Tile {...gameState.indicator} design={tileDesign} size="md" className="rotate-3 shadow-2xl group-hover:rotate-0 transition-transform duration-500" />
                                 <div className="absolute -bottom-8 bg-black/40 px-2 py-0.5 rounded text-[8px] text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity uppercase tracking-widest">{t("finish_indicator")}</div>
                             </div>
                         </div>
@@ -1031,7 +1274,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                         <DraggableLeftPile />
 
                         {/* RIGHT ZONE (My Target) */}
-                        <div className={`absolute right-0 flex flex-col items-center transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
+                        <div className={`absolute right-[-18px] flex flex-col items-center transition-all duration-500 ${gameState.players.length === 2 ? 'bottom-40' : 'bottom-4'}`}>
                             <div className="text-[10px] text-white/30 font-bold mb-2 uppercase tracking-tighter italic">{t("right_side_drag")}</div>
                             <div className="w-14 h-20 flex items-center justify-center relative">
                                 {isMyTurn && <DiscardZoneDroppable />}
@@ -1039,6 +1282,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                                     <Tile
                                         {...gameState.players[myIndex].discards[gameState.players[myIndex].discards.length - 1]}
                                         size="md"
+                                        design={tileDesign}
                                         className="shadow-lg opacity-80"
                                     />
                                 ) : (
@@ -1053,14 +1297,14 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                                 <div className="absolute right-4 top-4 opacity-40 hover:opacity-100 transition-opacity">
                                     <div className="w-14 h-20 flex items-center justify-center relative">
                                         {gameState.players[(myIndex + 1) % 4]?.discards.slice(-1)[0] && (
-                                            <Tile {...gameState.players[(myIndex + 1) % 4].discards.slice(-1)[0]} size="md" className="shadow-md" />
+                                            <Tile {...gameState.players[(myIndex + 1) % 4].discards.slice(-1)[0]} design={tileDesign} size="md" className="shadow-md" />
                                         )}
                                     </div>
                                 </div>
                                 <div className="absolute left-4 top-4 opacity-40 hover:opacity-100 transition-opacity">
                                     <div className="w-14 h-20 flex items-center justify-center relative">
                                         {gameState.players[(myIndex + 2) % 4]?.discards.slice(-1)[0] && (
-                                            <Tile {...gameState.players[(myIndex + 2) % 4].discards.slice(-1)[0]} size="md" className="shadow-md" />
+                                            <Tile {...gameState.players[(myIndex + 2) % 4].discards.slice(-1)[0]} design={tileDesign} size="md" className="shadow-md" />
                                         )}
                                     </div>
                                 </div>
@@ -1082,6 +1326,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                         flipAnimationIds={flipAnimationIds}
                         flippedTileIds={flippedTileIds}
                         isAutoArrangeVisible={isAutoArrangeVisible}
+                        tileDesign={tileDesign}
+                        myTeam={roomData?.players.find(p => p.id === currentUser.id)?.team}
                     />
                 </motion.div>
             </DndContext>
@@ -1091,21 +1337,33 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
 // Droppable Rack Component
 const PlayerRackDroppable = ({
-    isSpectator, isMyTurn, isArranging, handleAutoArrange, is101Mode, gameState, rackSlots, handleDiscard, handleFlipTile, flipAnimationIds, flippedTileIds, isAutoArrangeVisible
+    isSpectator, isMyTurn, isArranging, handleAutoArrange, is101Mode, gameState, rackSlots, handleDiscard, handleFlipTile, flipAnimationIds, flippedTileIds, isAutoArrangeVisible, tileDesign, myTeam
 }: any) => {
     const { setNodeRef, isOver } = useDroppable({ id: 'rack-droppable' });
     const { t } = useLanguage();
 
     return (
-        <div ref={setNodeRef} className="absolute bottom-0 left-0 w-full h-[250px] flex justify-center items-end pb-0 z-30 perspective-1000">
+        <div className="absolute bottom-0 left-0 w-full h-[250px] flex justify-center items-end pb-0 z-30 perspective-1000">
             {!isSpectator ? (
-                <div className={`
-                    relative bg-[#3e2723] w-full max-w-[95%] md:max-w-[1100px] h-[160px] rounded-t-lg shadow-[0_-20px_60px_rgba(0,0,0,0.8)] border-t-[8px] border-[#5d4037] flex items-center justify-center pb-4 transform rotateX(5deg) origin-bottom transition-all duration-300 hover:rotateX(0deg)
-                    ${isMyTurn ? 'ring-4 ring-yellow-400 shadow-[0_-20px_80px_rgba(255,215,0,0.4)]' : ''}
+                <div
+                    ref={setNodeRef}
+                    className={`
+                    relative w-full max-w-[95%] md:max-w-[1100px] h-[160px] rounded-t-3xl flex items-center justify-center pb-4 transform rotateX(5deg) origin-bottom transition-all duration-300 hover:rotateX(0deg)
+                    bg-gradient-to-b from-[#4a3428] via-[#3e2723] to-[#2d1f1a]
+                    shadow-[0_-30px_80px_rgba(0,0,0,0.9),0_-10px_30px_rgba(0,0,0,0.5)]
+                    border-t-[10px] border-x-4 border-[#6d4c41]
+                    ${isMyTurn ? 'ring-4 ring-yellow-400 shadow-[0_-30px_100px_rgba(255,215,0,0.5),0_0_50px_rgba(255,215,0,0.3)]' : ''}
                     ${isArranging ? 'animate-[rackPulse_0.5s_ease-in-out]' : ''}
-                    ${isOver ? 'bg-[#5d4037]' : ''}
+                    ${isOver ? 'bg-gradient-to-b from-[#5d4037] via-[#4a3428] to-[#3e2723]' : ''}
                 `}>
-                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-30 mix-blend-overlay pointer-events-none"></div>
+                    {/* Wood texture overlay */}
+                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-40 mix-blend-overlay pointer-events-none rounded-t-3xl"></div>
+
+                    {/* Metallic edge highlight */}
+                    <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-transparent via-[#8d6e63]/30 to-transparent pointer-events-none"></div>
+
+                    {/* Inner shadow for depth */}
+                    <div className="absolute inset-0 rounded-t-3xl shadow-[inset_0_10px_30px_rgba(0,0,0,0.6),inset_0_-5px_15px_rgba(255,255,255,0.05)] pointer-events-none"></div>
 
                     {/* Auto-Arrange Button - Only visible for the first 30s */}
                     {isAutoArrangeVisible && (
@@ -1118,9 +1376,17 @@ const PlayerRackDroppable = ({
                         </button>
                     )}
 
+                    {/* Team indicator for local player */}
+                    {myTeam && (
+                        <div className={`absolute -top-14 left-4 px-4 py-2 rounded-xl text-xs font-black text-white shadow-2xl border border-white/20 backdrop-blur-xl z-50 flex items-center gap-2 ${myTeam === 1 ? 'bg-blue-600/80 shadow-blue-500/20' : 'bg-red-600/80 shadow-red-500/20'}`}>
+                            <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+                            {t("team")?.toUpperCase() || "TAKIM"} {myTeam} ({t("you")?.toUpperCase() || "SİZ"})
+                        </div>
+                    )}
+
                     {/* Local Player Turn Timer */}
                     {isMyTurn && (
-                        <div className="absolute -top-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1">
+                        <div className="absolute -top-24 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1">
                             <div className="flex items-center justify-center bg-black/60 backdrop-blur-xl px-8 py-2 rounded-2xl border border-yellow-400/30 shadow-[0_0_30px_rgba(255,215,0,0.2)] min-w-[100px]">
                                 <div className={`text-3xl font-black ${gameState.turnTimer < 10 ? 'text-red-500 animate-pulse' : 'text-yellow-400'}`}>
                                     {gameState.turnTimer}
@@ -1149,6 +1415,7 @@ const PlayerRackDroppable = ({
                                             onFlip={handleFlipTile}
                                             isFlipped={flipAnimationIds.has(tile.id)}
                                             hasBeenFlipped={flippedTileIds.has(tile.id)}
+                                            design={tileDesign}
                                         />
                                     </div>
                                 ) : null}
@@ -1168,25 +1435,25 @@ const PlayerRackDroppable = ({
 };
 
 // Component to render the item being dragged
-const ActiveDragItem = () => {
+const ActiveDragItem = ({ design }: { design: any }) => {
     const { active } = useDndContext();
     if (!active) return null;
 
     const activeId = active.id.toString();
 
     if (activeId === 'deck-source') {
-        return <Tile isBack size="md" className="shadow-2xl ring-4 ring-yellow-400 rotate-3 opacity-90 scale-110" />;
+        return <Tile isBack size="md" design={design} className="shadow-2xl ring-4 ring-yellow-400 rotate-3 opacity-90 scale-110" />;
     }
 
     if (activeId === 'left-pile-source') {
         const tile = active.data.current as TileData;
-        return <Tile {...tile} size="md" className="shadow-2xl ring-4 ring-blue-400 rotate-3 opacity-90 scale-110" />;
+        return <Tile {...tile} size="md" design={design} className="shadow-2xl ring-4 ring-blue-400 rotate-3 opacity-90 scale-110" />;
     }
 
     // Hand tiles
     if (!isNaN(parseInt(activeId))) {
-        const tile = active.data.current as TileData;
-        return <Tile {...tile} size="md" className="shadow-2xl ring-4 ring-yellow-400 rotate-3 opacity-90 scale-110" />;
+        const data = active.data.current as any;
+        return <Tile {...data} isBack={data.isFlipped} design={design} size="md" className="shadow-2xl ring-4 ring-yellow-400 rotate-3 opacity-90 scale-110" />;
     }
 
     return null;

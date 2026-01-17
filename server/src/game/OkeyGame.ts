@@ -1,28 +1,4 @@
-export type Color = 'red' | 'black' | 'blue' | 'yellow' | 'fake';
-
-export interface Tile {
-    id: number;
-    color: Color;
-    value: number; // 1-13, or special for fake okey
-}
-
-export interface PlayerState {
-    id: string;
-    hand: Tile[];
-    discards: Tile[];
-    isTurn: boolean;
-}
-
-export interface GameState {
-    players: PlayerState[];
-    indicator: Tile;
-    okeyTile: Tile; // The logic tile that acts as joker
-    centerCount: number;
-    turnIndex: number;
-    status: 'PLAYING' | 'FINISHED';
-    winnerId?: string;
-    turnTimer: number;
-}
+import { Tile, Color, PlayerState, GameState } from '@okey/shared';
 
 export class OkeyGame {
     private deck: Tile[] = [];
@@ -185,27 +161,27 @@ export class OkeyGame {
         if (playerIndex === -1) return;
 
         if (playerIndex !== this.turnIndex) {
-            throw new Error("Not your turn");
+            throw new Error("Sıra sende değil");
         }
 
         const player = this.players[playerIndex];
 
         switch (action.type) {
             case 'DRAW_CENTER':
-                if (player.hand.length !== 14) throw new Error("Did you already draw?");
+                if (player.hand.length !== 14) throw new Error("Zaten taş çektin mi?");
                 this.drawFromCenter(playerIndex);
                 break;
             case 'DRAW_LEFT':
-                if (player.hand.length !== 14) throw new Error("Did you already draw?");
+                if (player.hand.length !== 14) throw new Error("Zaten taş çektin mi?");
                 this.drawFromLeft(playerIndex);
                 break;
             case 'DISCARD':
-                if (player.hand.length !== 15) throw new Error("You must draw before discarding");
-                if (!action.payload || !action.payload.tileId) throw new Error("Missing tileId");
+                if (player.hand.length !== 15) throw new Error("Taş atmadan önce taş çekmelisin");
+                if (!action.payload || !action.payload.tileId) throw new Error("Eksik taş bilgisi");
                 this.discardTile(playerIndex, action.payload.tileId);
                 break;
             case 'FINISH_GAME':
-                if (player.hand.length !== 15) throw new Error("Invalid state");
+                if (player.hand.length !== 15) throw new Error("Geçersiz durum");
                 // Validate Hand
                 const { HandValidator } = await import('./HandValidator');
 
@@ -217,51 +193,46 @@ export class OkeyGame {
                 // Here payload should be the finish tile.
 
                 const finishTileId = action.payload?.tileId;
-                if (!finishTileId) throw new Error("Select a tile to finish with");
+                if (!finishTileId) throw new Error("Bitirmek için bir taş seçin");
 
                 // Separate hand into Hand (14) and Finish Tile (1)
                 const finishTileIdx = player.hand.findIndex(t => t.id === finishTileId);
-                if (finishTileIdx === -1) throw new Error("Tile not found");
+                if (finishTileIdx === -1) throw new Error("Taş bulunamadı");
 
                 const remainingHand = [...player.hand];
                 remainingHand.splice(finishTileIdx, 1);
 
-                const isValid = HandValidator.validateHand(remainingHand, this.okeyTile);
+                const validationResult = HandValidator.validateHand(remainingHand, this.okeyTile);
 
-                if (isValid) {
-                    console.log(`[OkeyGame] FINISH_GAME SUCCESS: ${playerId} won!`);
+                if (validationResult.isValid) {
+                    const winType = validationResult.usedJoker ? 'normal' : 'double';
+                    console.log(`[OkeyGame] FINISH_GAME SUCCESS: ${playerId} won with ${winType} finish!`);
                     this.status = 'FINISHED';
                     player.isTurn = false;
-                    this.onStateChange({ ...this.getGameState(), winnerId: playerId });
+                    this.onStateChange({ ...this.getGameState(), winnerId: playerId, winType });
                 } else {
                     console.warn(`[OkeyGame] FINISH_GAME ATTEMPT FAILED: ${playerId} hand invalid.`);
-                    throw new Error("Hand is not a winning hand!");
+                    throw new Error("Eliniz okey değil!");
                 }
                 break;
         }
     }
 
     private drawFromCenter(playerIndex: number) {
-        if (this.players[playerIndex].hand.length !== 14) throw new Error("Already drew or have too many tiles");
+        if (this.players[playerIndex].hand.length !== 14) throw new Error("Zaten taş çektin veya elinde çok fazla taş var");
 
         if (this.deck.length === 0) {
-            console.log(`[OkeyGame] Deck empty. Reshuffling discards...`);
-            // Collect all discards
-            const allDiscards: Tile[] = [];
-            this.players.forEach(p => {
-                allDiscards.push(...p.discards);
-                p.discards = [];
-            });
+            console.log(`[OkeyGame] Deck empty. Reshuffling discards to create new deck.`);
+            this.reshuffleDiscards();
 
-            if (allDiscards.length === 0) {
-                console.log(`[OkeyGame] No discards to reshuffle. Game ends in a draw.`);
+            if (this.deck.length === 0) {
+                console.log(`[OkeyGame] Deck still empty after reshuffle. Game ends in a draw.`);
                 this.status = 'FINISHED';
                 this.onStateChange(this.getGameState());
                 return;
+            } else {
+                this.onStateChange({ ...this.getGameState(), event: 'reshuffled' });
             }
-
-            this.deck = allDiscards;
-            this.shuffleDeck();
         }
 
         const tile = this.deck.pop();
@@ -269,6 +240,20 @@ export class OkeyGame {
             this.players[playerIndex].hand.push(tile);
             this.onStateChange(this.getGameState());
         }
+    }
+
+    private reshuffleDiscards() {
+        const allDiscards: Tile[] = [];
+        // Collect all discards from all players
+        this.players.forEach(player => {
+            allDiscards.push(...player.discards);
+            player.discards = []; // Clear player's discards
+        });
+
+        // Update deck
+        this.deck = allDiscards;
+        this.shuffleDeck(); // Reuse existing shuffle method
+        console.log(`[OkeyGame] Reshuffled ${this.deck.length} tiles from discards.`);
     }
 
     private drawFromLeft(playerIndex: number) {
@@ -329,18 +314,7 @@ export class OkeyGame {
         return {
             players: this.players.map(p => ({
                 id: p.id,
-                hand: p.hand, // NOTE: In real game, should hide opponents hands.
-                // But for backend state, we send everything? 
-                // Ideally only send visible info to specific sockets.
-                // For this "GameState" object, we keep it raw, 
-                // RoomManager should filter it before sending to specific clients if needed.
-                // For MVP, we'll send everything to client and client hides it (NOT SECURE but faster).
-                // Wait, "Players can only see their own tiles" is a requirement.
-                // So we should probably sanitize this in RoomManager or return a sanitized view here?
-                // I'll keep this as "Full State" and sanitizing happens before emit if I have time, 
-                // OR I trust the client for MVP (User requirement: "Oyuncular sadece kendi taşlarını görebilsin").
-                // I MUST sanitize.
-                // I will add a `getOwnerView(playerId)` method.
+                hand: p.hand,
                 discards: p.discards,
                 isTurn: p.isTurn
             })),

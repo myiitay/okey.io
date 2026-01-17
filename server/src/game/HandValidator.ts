@@ -1,7 +1,7 @@
-import { Tile, Color } from './OkeyGame';
+import { Tile, Color } from '@okey/shared';
 
 export class HandValidator {
-    static validateHand(hand: Tile[], okeyTile: Tile): boolean {
+    static validateHand(hand: Tile[], okeyTile: Tile): { isValid: boolean, usedJoker: boolean } {
         // Basic Logic:
         // 1. Identify Jokers (Tiles matching okeyTile attributes)
         // 2. Identify Fake Okeys (value 0) -> They act as the "Natural" value of okeyTile.
@@ -20,6 +20,8 @@ export class HandValidator {
         const naturalOkeyColor = okeyTile.color;
         const naturalOkeyValue = okeyTile.value;
 
+        let hasJoker = false;
+
         const processedHand = hand.map(t => {
             let pColor = t.color;
             let pValue = t.value;
@@ -28,6 +30,7 @@ export class HandValidator {
             // Is it a Joker (The actual Okey tile)?
             if (t.color === naturalOkeyColor && t.value === naturalOkeyValue) {
                 isJoker = true;
+                hasJoker = true;
             }
 
             // Is it a Fake Okey?
@@ -59,7 +62,9 @@ export class HandValidator {
         const canPair = this.canFormPairs(processedHand);
         const canSet = this.canFormSets(processedHand);
 
-        return canSet || canPair;
+        const isValid = canSet || canPair;
+
+        return { isValid, usedJoker: hasJoker };
     }
 
     private static canFormPairs(hand: any[]): boolean {

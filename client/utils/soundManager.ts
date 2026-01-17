@@ -49,7 +49,8 @@ class SoundManager {
 
             // Feedback - Soft and friendly
             error: "https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3", // Soft error
-            chat: "https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3" // Friendly message
+            chat: "https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3", // Friendly message
+            laugh: "https://assets.mixkit.co/active_storage/sfx/2810/2810-preview.mp3" // Laugh for joker discard
         };
 
         Object.entries(soundUrls).forEach(([name, url]) => {

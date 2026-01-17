@@ -133,13 +133,44 @@ export const arrangeByValue = (normalTiles: TileData[], okeyTiles: TileData[], f
     return [...newHand, null, ...okeyTiles, ...fakeJokers];
 };
 
-// Mode 4: Arrange by Potential (Near-complete groups)
-export const arrangeByPotential = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
-    // This defines pairs (2 same val different color, or 2 consecutive same color)
-    // Complex heuristic...
-    // For now simple implementation similar to Groups but looser
+// Mode 4: Arrange by Pairs (Çiftler)
+export const arrangeByPairs = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
+    const sorted = [...normalTiles].sort((a, b) => {
+        if (a.value !== b.value) return a.value - b.value;
+        return a.color.localeCompare(b.color);
+    });
 
-    // Just alias to Groups for MVP refactor, or reuse the same logic
+    const groups: TileData[][] = [];
+    const used = new Set<string>();
+
+    for (let i = 0; i < sorted.length; i++) {
+        const t1 = sorted[i];
+        if (used.has(t1.id.toString())) continue;
+
+        for (let j = i + 1; j < sorted.length; j++) {
+            const t2 = sorted[j];
+            if (used.has(t2.id.toString())) continue;
+
+            if (t1.value === t2.value && t1.color === t2.color) {
+                groups.push([t1, t2]);
+                used.add(t1.id.toString());
+                used.add(t2.id.toString());
+                break;
+            }
+        }
+    }
+
+    const newHand: (TileData | null)[] = [];
+    groups.forEach(g => {
+        newHand.push(...g, null);
+    });
+
+    const leftovers = normalTiles.filter(t => !used.has(t.id.toString()));
+    return [...newHand, ...leftovers, null, ...okeyTiles, ...fakeJokers];
+};
+
+// Mode 5: Arrange by Potential (Near-complete groups)
+export const arrangeByPotential = (normalTiles: TileData[], okeyTiles: TileData[], fakeJokers: TileData[]): (TileData | null)[] => {
     return arrangeByGroups(normalTiles, okeyTiles, fakeJokers);
 };
 

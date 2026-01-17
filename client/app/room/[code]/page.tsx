@@ -4,11 +4,101 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/utils/socket";
 import { GameBoard } from "@/components/GameBoard";
+import { GameBoard101 } from "@/components/GameBoard101";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { soundManager } from "@/utils/soundManager";
+
+const getFrameStyle = (frameId?: string) => {
+    switch (frameId) {
+        case 'gold': return 'rounded-full border-4 border-[#ffd700] shadow-[0_0_15px_rgba(255,215,0,0.3)]';
+        case 'neon': return 'rounded-full border-4 border-[#00f2ff] shadow-[0_0_15px_rgba(0,242,255,0.3)]';
+        case 'fire': return 'rounded-full border-4 border-[#ff4500] shadow-[0_0_15px_rgba(255,69,0,0.3)]';
+        case 'royal': return 'rounded-full border-4 border-[#8a2be2] shadow-[0_0_15px_rgba(138,43,226,0.3)]';
+        case 'emerald': return 'rounded-full border-4 border-[#10b981] shadow-[0_0_15px_rgba(16,185,129,0.3)]';
+        default: return 'rounded-full border-white/10';
+    }
+};
+import { SoundToggle } from "@/components/game/SoundToggle";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { RoomData, GameState, TileData, RoomSettings } from "@/components/game/types";
+import { RoomData, GameState, TileData, RoomSettings, RoomPlayer } from "@/components/game/types";
+
+// Player Card Component for Waiting Room
+const PlayerCard = ({ player, socket, isHost, handleKick, emotes, t, isHostMember }: {
+    player: RoomPlayer,
+    socket: any,
+    isHost: boolean,
+    handleKick: (id: string) => void,
+    emotes: any[],
+    t: any,
+    isHostMember?: boolean
+}) => (
+    <div className="group relative">
+        <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 rounded-2xl blur opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+        <div className={`
+            relative bg-[#1e293b]/60 backdrop-blur border p-4 rounded-2xl flex items-center gap-5 transition-all duration-300
+            ${player.id === socket.id ? 'border-yellow-500/30 shadow-[0_0_15px_rgba(234,179,8,0.1)]' : 'border-white/5 hover:border-white/20'}
+        `}>
+            <div className={`w-16 h-16 flex items-center justify-center text-5xl bg-gradient-to-b from-white/10 to-white/5 shadow-inner border group-hover:scale-105 transition-all duration-300 relative ${getFrameStyle(player.frameId)}`}>
+                {player.avatar || "👤"}
+                {isHostMember && <div className="absolute top-0 right-0 bg-yellow-400 w-4 h-4 rounded-full border-2 border-[#1e293b] shadow-sm z-10" title={t("host")}></div>}
+            </div>
+
+            {/* Info */}
+            <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                    <span className="font-bold text-white text-lg tracking-wide truncate">{player.name}</span>
+                    {player.id === socket.id && <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">{t("you")}</span>}
+                    {isHostMember && <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">{t("host")}</span>}
+                </div>
+                {/* Emote Bubble */}
+                <AnimatePresence>
+                    {emotes.find(e => e.playerId === player.id) && (
+                        <motion.div
+                            key={emotes.find(e => e.playerId === player.id)?.id}
+                            initial={{ scale: 0, y: 0, opacity: 0 }}
+                            animate={{ scale: 1.1, y: -50, opacity: 1 }}
+                            exit={{ scale: 0.5, y: -70, opacity: 0 }}
+                            className="absolute -top-2 -right-10 bg-white text-black px-4 py-2 rounded-2xl rounded-bl-none flex items-center gap-2 shadow-[0_10px_30px_rgba(0,0,0,0.3)] z-50 border-2 border-yellow-400 min-w-[80px]"
+                        >
+                            <span className="text-2xl">{emotes.find(e => e.playerId === player.id)?.emote}</span>
+                            <span className="text-xs font-bold whitespace-nowrap">
+                                {(() => {
+                                    const icon = emotes.find(e => e.playerId === player.id)?.emote;
+                                    const map: Record<string, string> = {
+                                        "👋": "emote_selam", "🍀": "emote_luck", "👏": "emote_congrats",
+                                        "🙏": "emote_thanks", "⚡": "emote_hurry", "🃏": "emote_hand"
+                                    };
+                                    return t(map[icon as string] || "");
+                                })()}
+                            </span>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+                {/* Ready Status */}
+                <div className="flex items-center gap-1.5 mt-1">
+                    <div className={`w-2 h-2 rounded-full ${(player.isReady || player.isBot) ? 'bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]' : 'bg-gray-600'}`}></div>
+                    <span className={`text-[10px] font-black uppercase tracking-widest ${(player.isReady || player.isBot) ? 'text-green-400' : 'text-gray-500'}`}>
+                        {(player.isReady || player.isBot) ? t("ready") : t("unready")}
+                    </span>
+                </div>
+            </div>
+
+            {/* Host Controls */}
+            {isHost && player.id !== socket.id && (
+                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                        onClick={() => { handleKick(player.id); }}
+                        className="bg-red-500/20 hover:bg-red-500/80 text-red-200 hover:text-white p-2 rounded-lg transition-colors border border-red-500/30"
+                        title={t("kick")}
+                    >
+                        👢
+                    </button>
+                </div>
+            )}
+        </div>
+    </div>
+);
 
 export default function RoomPage() {
     const { code } = useParams();
@@ -91,21 +181,29 @@ export default function RoomPage() {
 
             const gameplayErrors = [
                 "You must draw before discarding",
+                "Taş atmadan önce taş çekmelisin",
                 "Not your turn",
+                "Sıra sende değil",
                 "Did you already draw?",
+                "Zaten taş çektin mi?",
                 "Must draw before discard",
                 "Tile not in hand",
                 "Missing tileId",
+                "Eksik taş bilgisi",
                 "Hand is not a winning hand!",
+                "Eliniz okey değil!",
                 "Select a tile to finish with",
-                "Already drew"
+                "Bitirmek için bir taş seçin",
+                "Already drew",
+                "Zaten taş çektin"
             ];
 
             if (gameplayErrors.some(e => msg.includes(e))) {
-                alert("⚠️ " + msg);
-            } else {
-                setError(msg);
+                console.log("Gameplay error (handled by GameBoard):", msg);
+                return;
             }
+
+            setError(msg);
         });
 
         socket.on("emoteReceived", (data: { playerId: string, emote: string, text?: string }) => {
@@ -115,7 +213,7 @@ export default function RoomPage() {
                 console.log(`Emote from ${player.name}: ${data.emote}`);
                 soundManager.play('click');
             }
-            setEmotes(prev => [...prev, { id: Math.random(), playerId: data.playerId, emote: data.emote, text: data.text }]);
+            setEmotes(prev => [...prev, { id: Date.now() + Math.random(), playerId: data.playerId, emote: data.emote, text: data.text }]);
             setTimeout(() => {
                 setEmotes(prev => prev.slice(1));
             }, 3000);
@@ -174,6 +272,11 @@ export default function RoomPage() {
         socket.emit("updateSettings", settings);
     };
 
+    const handleJoinTeam = (team: 1 | 2) => {
+        soundManager.play('click');
+        socket.emit("joinTeam", team);
+    };
+
     const handleSendEmote = (emoteKey: string, emoji: string) => {
         soundManager.play('click');
         const text = t(emoteKey);
@@ -213,12 +316,14 @@ export default function RoomPage() {
     useEffect(() => {
         if (roomData && socket.id) {
             const isMember = roomData.players.some(p => p.id === socket.id);
-            if (!isMember) {
-                // Redirect to home to join
-                router.push(`/?join=${code}`);
+            // Only redirect if NOT a member and NOT a spectator and NOT connecting
+            // actually, blocking auto-redirect is safer to debug "loop"
+            if (!isMember && !isSpectator) {
+                console.warn("User not in player list", socket.id, roomData.players);
+                // router.push(`/?join=${code}`); // DISABLED AUTO REDIRECT TO FIX LOOP
             }
         }
-    }, [roomData, socket.id, code, router]);
+    }, [roomData, socket.id, code, router, isSpectator]);
 
     if (error) {
         return (
@@ -244,6 +349,19 @@ export default function RoomPage() {
 
 
     if (roomData.gameStarted) {
+        if (is101Mode) {
+            return (
+                <GameBoard101
+                    roomCode={code as string}
+                    currentUser={currentUser}
+                    gameMode={'101'}
+                    isSpectator={isSpectator}
+                    initialGameState={initialGameState}
+                    isFreshStart={isFreshStart}
+                    players={roomData.players}
+                />
+            );
+        }
         return (
             <GameBoard
                 roomCode={code as string}
@@ -265,10 +383,15 @@ export default function RoomPage() {
             <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-red-900/40 via-[#2a0808] to-rose-900/40' : 'bg-gradient-to-br from-purple-900/40 via-[#0f0c29] to-blue-900/40'} pointer-events-none`}></div>
 
             {isSpectator && (
-                <div className="absolute top-4 z-50 bg-blue-500/80 backdrop-blur-md px-6 py-2 rounded-full border border-blue-400/50 text-white font-bold animate-pulse shadow-[0_0_20px_rgba(59,130,246,0.5)]">
+                <div className="absolute top-4 left-4 z-50 bg-blue-500/80 backdrop-blur-md px-6 py-2 rounded-full border border-blue-400/50 text-white font-bold animate-pulse shadow-[0_0_20px_rgba(59,130,246,0.5)]">
                     👁️ {t("spectator_mode") || "İzleyici Modu: Oda Dolu"}
                 </div>
             )}
+
+            <div className="absolute top-4 right-4 z-50">
+                <SoundToggle />
+            </div>
+
             <div className={`absolute top-0 right-0 w-[500px] h-[500px] ${is101Mode ? 'bg-red-600/20' : 'bg-purple-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`}></div>
             <div className={`absolute bottom-0 left-0 w-[500px] h-[500px] ${is101Mode ? 'bg-rose-600/20' : 'bg-blue-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`} style={{ animationDelay: "1s" }}></div>
 
@@ -338,7 +461,7 @@ export default function RoomPage() {
                         onClick={() => { soundManager.play('click'); handleLeave(); }}
                         className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 hover:border-red-500/50 p-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 group mb-2"
                     >
-                        <span className="group-hover:-translate-x-1 transition-transform">⬅</span> {t("exit")}
+                        {t("exit")}
                     </button>
 
                     {/* Host Settings Panel */}
@@ -349,24 +472,6 @@ export default function RoomPage() {
                             </div>
 
                             <div className="space-y-4">
-                                <div>
-                                    <div className="flex justify-between text-xs font-bold text-white/60 mb-2">
-                                        <span>{t("turn_time")}</span>
-                                        <span className="text-yellow-400">{roomData.settings.turnTime} {t("seconds")}</span>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        {[15, 30, 60].map(time => (
-                                            <button
-                                                key={time}
-                                                onClick={() => handleUpdateSettings({ turnTime: time })}
-                                                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${roomData.settings?.turnTime === time ? 'bg-yellow-500 text-black border-yellow-400' : 'bg-white/5 text-white/40 border-white/10 hover:bg-white/10'}`}
-                                            >
-                                                {time}s
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
                                 <div>
                                     <div className="flex justify-between text-xs font-bold text-white/60 mb-2">
                                         <span>{t("target_score")}</span>
@@ -384,6 +489,25 @@ export default function RoomPage() {
                                         ))}
                                     </div>
                                 </div>
+
+                                {roomData.players.length === 4 && (
+                                    <div>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => handleUpdateSettings({ isPaired: false })}
+                                                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${!roomData.settings.isPaired ? 'bg-yellow-500 text-black border-yellow-400' : 'bg-white/5 text-white/40 border-white/10 hover:bg-white/10'}`}
+                                            >
+                                                {t("single") || "Tekli"}
+                                            </button>
+                                            <button
+                                                onClick={() => handleUpdateSettings({ isPaired: true })}
+                                                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${roomData.settings.isPaired ? 'bg-yellow-500 text-black border-yellow-400' : 'bg-white/5 text-white/40 border-white/10 hover:bg-white/10'}`}
+                                            >
+                                                {t("paired") || "Eşli"}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -406,79 +530,83 @@ export default function RoomPage() {
                         </div>
 
                         <div className="grid grid-cols-1 gap-3 flex-1 content-start">
-                            {roomData.players.map((player, index) => (
-                                <div key={player.id} className="group relative">
-                                    <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 rounded-2xl blur opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                                    <div className={`
-                                        relative bg-[#1e293b]/60 backdrop-blur border p-4 rounded-2xl flex items-center gap-5 transition-all duration-300
-                                        ${player.id === socket.id ? 'border-yellow-500/30 shadow-[0_0_15px_rgba(234,179,8,0.1)]' : 'border-white/5 hover:border-white/20'}
-                                    `}>
-                                        {/* Avatar */}
-                                        <div className="w-16 h-16 rounded-full flex items-center justify-center text-5xl bg-gradient-to-b from-white/10 to-white/5 shadow-inner border border-white/10 relative overflow-hidden group-hover:scale-105 transition-transform">
-                                            {player.avatar || "👤"}
-                                            {/* Turn/Status Dot (Optional) */}
-                                            {index === 0 && <div className="absolute top-0 right-0 bg-yellow-400 w-4 h-4 rounded-full border-2 border-[#1e293b] shadow-sm" title={t("host")}></div>}
+                            {roomData.settings.isPaired ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {/* Team 1 */}
+                                    <div className="space-y-3">
+                                        <div className="flex items-center justify-between px-2">
+                                            <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest">{t("team")} 1</h3>
+                                            <button
+                                                onClick={() => handleJoinTeam(1)}
+                                                className={`text-[10px] px-2 py-1 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/40 transition-all ${roomData.players.find(p => p.id === socket.id)?.team === 1 ? 'opacity-50 pointer-events-none' : ''}`}
+                                            >
+                                                {t("join") || "Katıl"}
+                                            </button>
                                         </div>
-
-                                        {/* Info */}
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="font-bold text-white text-lg tracking-wide truncate">{player.name}</span>
-                                                {player.id === socket.id && <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">{t("you")}</span>}
-                                                {index === 0 && <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">{t("host")}</span>}
-                                            </div>
-                                            {/* Emote Bubble */}
-                                            <AnimatePresence>
-                                                {emotes.find(e => e.playerId === player.id) && (
-                                                    <motion.div
-                                                        key={emotes.find(e => e.playerId === player.id)?.id}
-                                                        initial={{ scale: 0, y: 0, opacity: 0 }}
-                                                        animate={{ scale: 1.1, y: -50, opacity: 1 }}
-                                                        exit={{ scale: 0.5, y: -70, opacity: 0 }}
-                                                        className="absolute -top-2 -right-10 bg-white text-black px-4 py-2 rounded-2xl rounded-bl-none flex items-center gap-2 shadow-[0_10px_30px_rgba(0,0,0,0.3)] z-50 border-2 border-yellow-400 min-w-[80px]"
-                                                    >
-                                                        <span className="text-2xl">{emotes.find(e => e.playerId === player.id)?.emote}</span>
-                                                        <span className="text-xs font-bold whitespace-nowrap">
-                                                            {/* Reverse lookup text from icon - quick hack since we send icon */}
-                                                            {(() => {
-                                                                const icon = emotes.find(e => e.playerId === player.id)?.emote;
-                                                                const map: Record<string, string> = {
-                                                                    "👋": "emote_selam", "🍀": "emote_luck", "👏": "emote_congrats",
-                                                                    "🙏": "emote_thanks", "⚡": "emote_hurry", "🃏": "emote_hand"
-                                                                };
-                                                                return t(map[icon as string] || "");
-                                                            })()}
-                                                        </span>
-                                                    </motion.div>
-                                                )}
-                                            </AnimatePresence>
-                                            {/* Ready Status */}
-                                            <div className="flex items-center gap-1.5 mt-1">
-                                                <div className={`w-2 h-2 rounded-full ${(player.isReady || player.isBot) ? 'bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]' : 'bg-gray-600'}`}></div>
-                                                <span className={`text-[10px] font-black uppercase tracking-widest ${(player.isReady || player.isBot) ? 'text-green-400' : 'text-gray-500'}`}>
-                                                    {(player.isReady || player.isBot) ? t("ready") : t("unready")}
-                                                </span>
-                                            </div>
+                                        <div className="space-y-2">
+                                            {roomData.players.filter(p => p.team === 1).map((player) => (
+                                                <PlayerCard key={player.id} player={player} socket={socket} isHost={isHost} handleKick={handleKick} emotes={emotes} t={t} />
+                                            ))}
+                                            {Array.from({ length: Math.max(0, 2 - roomData.players.filter(p => p.team === 1).length) }).map((_, i) => (
+                                                <div key={`empty-t1-${i}`} className="border border-dashed border-white/10 rounded-xl p-3 h-[60px] flex items-center justify-center text-white/10 text-xs font-bold uppercase tracking-widest">
+                                                    {t("empty") || "Boş"}
+                                                </div>
+                                            ))}
                                         </div>
-
-                                        {/* Host Controls */}
-                                        {isHost && player.id !== socket.id && (
-                                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button
-                                                    onClick={() => { soundManager.play('click'); handleKick(player.id); }}
-                                                    className="bg-red-500/20 hover:bg-red-500/80 text-red-200 hover:text-white p-2 rounded-lg transition-colors border border-red-500/30"
-                                                    title={t("kick")}
-                                                >
-                                                    👢
-                                                </button>
-                                            </div>
-                                        )}
                                     </div>
-                                </div>
-                            ))}
 
-                            {/* Empty Slots */}
-                            {Array.from({ length: Math.max(0, 4 - roomData.players.length) }).map((_, i) => (
+                                    {/* Team 2 */}
+                                    <div className="space-y-3">
+                                        <div className="flex items-center justify-between px-2">
+                                            <h3 className="text-sm font-bold text-red-400 uppercase tracking-widest">{t("team")} 2</h3>
+                                            <button
+                                                onClick={() => handleJoinTeam(2)}
+                                                className={`text-[10px] px-2 py-1 rounded bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/40 transition-all ${roomData.players.find(p => p.id === socket.id)?.team === 2 ? 'opacity-50 pointer-events-none' : ''}`}
+                                            >
+                                                {t("join") || "Katıl"}
+                                            </button>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {roomData.players.filter(p => p.team === 2).map((player) => (
+                                                <PlayerCard key={player.id} player={player} socket={socket} isHost={isHost} handleKick={handleKick} emotes={emotes} t={t} />
+                                            ))}
+                                            {Array.from({ length: Math.max(0, 2 - roomData.players.filter(p => p.team === 2).length) }).map((_, i) => (
+                                                <div key={`empty-t2-${i}`} className="border border-dashed border-white/10 rounded-xl p-3 h-[60px] flex items-center justify-center text-white/10 text-xs font-bold uppercase tracking-widest">
+                                                    {t("empty") || "Boş"}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Spectators / Undeclared (Optional, but let's show all in teams or a 'No Team' list) */}
+                                    {roomData.players.filter(p => !p.team).length > 0 && (
+                                        <div className="col-span-full mt-4 space-y-2">
+                                            <h3 className="text-[10px] font-bold text-white/40 uppercase tracking-widest px-2">{t("no_team") || "Takımsızlar"}</h3>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {roomData.players.filter(p => !p.team).map((player) => (
+                                                    <PlayerCard key={player.id} player={player} socket={socket} isHost={isHost} handleKick={handleKick} emotes={emotes} t={t} />
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Bot and Slot controls for paired */}
+                                    {isHost && roomData.players.length < 4 && (
+                                        <div className="col-span-full mt-4">
+                                            <button onClick={handleAddBot} className="w-full bg-white/5 hover:bg-white/10 border border-dashed border-white/20 p-3 rounded-xl text-xs font-bold text-white/40 uppercase tracking-widest transition-all">
+                                                + {t("add_bot") || "Bot Ekle"}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                roomData.players.map((player, index) => (
+                                    <PlayerCard key={player.id} player={player} socket={socket} isHost={isHost} handleKick={handleKick} emotes={emotes} t={t} isHostMember={index === 0} />
+                                ))
+                            )}
+
+                            {/* Empty Slots (Single Mode Only) */}
+                            {!roomData.settings.isPaired && Array.from({ length: Math.max(0, 4 - roomData.players.length) }).map((_, i) => (
                                 <div key={`empty-${i}`} className={`border-2 border-dashed border-white/5 rounded-2xl p-4 flex items-center justify-between gap-4 transition-all ${i === 0 && isHost ? 'hover:border-yellow-500/30 hover:bg-white/5 cursor-pointer group/bot' : 'opacity-50 select-none'}`}>
                                     <div className="flex items-center gap-4">
                                         <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl ${i === 0 && isHost ? 'bg-white/10' : 'bg-white/5 animate-pulse'}`}>
@@ -493,7 +621,7 @@ export default function RoomPage() {
                                             onClick={handleAddBot}
                                             className="bg-yellow-500/20 hover:bg-yellow-500/40 text-yellow-400 px-4 py-2 rounded-xl text-sm font-bold border border-yellow-500/30 transition-all opacity-0 group-hover/bot:opacity-100"
                                         >
-                                            + {t("ready") === "HAZIR" ? "EKLE" : "ADD"}
+                                            + {t("add")}
                                         </button>
                                     )}
                                 </div>
@@ -503,31 +631,42 @@ export default function RoomPage() {
 
                     {/* Start Action */}
                     <div className="mt-auto flex flex-col gap-4">
-                        <button
-                            onClick={handleToggleReady}
-                            className={`w-full py-5 rounded-[1.5rem] font-black text-xl transition-all border-b-8 shadow-xl active:border-b-0 active:translate-y-2 ${roomData.players.find(p => p.id === socket.id)?.isReady ? 'bg-orange-500 text-white border-orange-700' : 'bg-green-500 text-white border-green-700'}`}
-                        >
-                            {roomData.players.find(p => p.id === socket.id)?.isReady ? t("unready") : t("ready")}
-                        </button>
+                        {!isHost && (
+                            <button
+                                onClick={handleToggleReady}
+                                className={`w-full py-5 rounded-[1.5rem] font-black text-xl transition-all border-b-8 shadow-xl active:border-b-0 active:translate-y-2 ${roomData.players.find(p => p.id === socket.id)?.isReady ? 'bg-orange-500 text-white border-orange-700' : 'bg-green-500 text-white border-green-700'}`}
+                            >
+                                {roomData.players.find(p => p.id === socket.id)?.isReady ? t("unready") : t("ready")}
+                            </button>
+                        )}
 
                         {isHost && (
                             <div className="w-full flex flex-col gap-2">
-                                {!roomData.players.every(p => p.isReady || p.isBot) && (
+                                {!roomData.players.every((p, idx) => idx === 0 || p.isReady || p.isBot) && (
                                     <div className="text-center text-xs font-bold text-yellow-400 animate-pulse bg-yellow-400/10 py-2 rounded-xl border border-yellow-400/20">
                                         ⚠️ {t("everyone_ready_warning")}
                                     </div>
                                 )}
+                                {roomData.settings.isPaired && !roomData.players.every(p => p.team === 1 || p.team === 2) && (
+                                    <div className="text-center text-xs font-bold text-yellow-400 animate-pulse bg-yellow-400/10 py-2 rounded-xl border border-yellow-400/20">
+                                        ⚠️ {t("team_selection_warning") || "Eşli oyun için herkesin takım seçmesi gerekiyor!"}
+                                    </div>
+                                )}
                                 <button
                                     onClick={() => { soundManager.play('click'); handleStartGame(); }}
-                                    disabled={roomData.players.length !== 2 && roomData.players.length !== 4 || isStarting || !roomData.players.every(p => p.isReady || p.isBot)}
+                                    disabled={
+                                        (roomData.players.length !== 2 && roomData.players.length !== 4) ||
+                                        isStarting ||
+                                        !roomData.players.every((p, idx) => idx === 0 || p.isReady || p.isBot) ||
+                                        (roomData.settings.isPaired && !roomData.players.every(p => p.team === 1 || p.team === 2))
+                                    }
                                     className={`
                                         w-full relative py-5 rounded-[1.5rem] font-black text-2xl text-white shadow-xl overflow-hidden transition-all duration-300
-                                        ${(roomData.players.length !== 2 && roomData.players.length !== 4) || isStarting || !roomData.players.every(p => p.isReady || p.isBot) ? 'bg-gray-600 cursor-not-allowed scale-95 opacity-80 grayscale' : 'bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 hover:shadow-[0_0_40px_rgba(34,197,94,0.4)] hover:scale-[1.02] active:scale-95'}
+                                        ${(roomData.players.length !== 2 && roomData.players.length !== 4) || isStarting || !roomData.players.every((p, idx) => idx === 0 || p.isReady || p.isBot) || (roomData.settings.isPaired && !roomData.players.every(p => p.team === 1 || p.team === 2)) ? 'bg-gray-600 cursor-not-allowed scale-95 opacity-80 grayscale' : 'bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 hover:shadow-[0_0_40px_rgba(34,197,94,0.4)] hover:scale-[1.02] active:scale-95'}
                                     `}
                                 >
                                     <span className={`relative z-10 flex items-center justify-center gap-3 ${isStarting ? 'animate-pulse' : ''}`}>
                                         {isStarting ? t("starting") : t("start_match")}
-                                        {!isStarting && <span className="text-3xl">🚀</span>}
                                     </span>
                                     {/* Shine Effect */}
                                     {!isStarting && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>}

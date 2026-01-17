@@ -2,19 +2,22 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import { RoomPlayer } from './types';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface LeaderboardProps {
     isOpen: boolean;
     onClose: () => void;
     players: RoomPlayer[];
     winScores: Record<string, number>;
+    isPaired?: boolean;
 }
 
-export const Leaderboard: React.FC<LeaderboardProps> = ({ isOpen, onClose, players, winScores }) => {
+export const Leaderboard: React.FC<LeaderboardProps> = ({ isOpen, onClose, players, winScores, isPaired }) => {
+    const { t } = useLanguage();
     // Sort players by score
     const sortedPlayers = [...(players || [])].sort((a, b) => {
-        const scoreA = winScores[a.name] || 0;
-        const scoreB = winScores[b.name] || 0;
+        const scoreA = isPaired ? (winScores[`Team ${a.team}`] || 0) : (winScores[a.name] || 0);
+        const scoreB = isPaired ? (winScores[`Team ${b.team}`] || 0) : (winScores[b.name] || 0);
         return scoreB - scoreA;
     });
 
@@ -81,7 +84,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ isOpen, onClose, playe
 
                                             <div className="flex-1">
                                                 <div className={`font-bold ${isTop ? 'text-yellow-100' : 'text-white'}`}>
-                                                    {p.name}
+                                                    {p.name} {isPaired && <span className="text-[10px] text-white/40 ml-2">({t("team") || "Takım"} {p.team})</span>}
                                                 </div>
                                                 <div className="text-xs text-white/30">
                                                     {p.connected ? 'Çevrimiçi' : 'Bağlantı Koptu'}
@@ -90,7 +93,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ isOpen, onClose, playe
 
                                             <div className="flex flex-col items-end">
                                                 <div className={`text-2xl font-black ${isTop ? 'text-yellow-400' : 'text-white/80'}`}>
-                                                    {score}
+                                                    {isPaired ? (winScores[`Team ${p.team}`] || 0) : (winScores[p.name] || 0)}
                                                 </div>
                                                 <div className="text-[10px] font-bold text-white/20 uppercase tracking-widest">
                                                     PUAN

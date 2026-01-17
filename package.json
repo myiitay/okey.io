@@ -1,0 +1,17 @@
+{
+    "name": "okey-monorepo",
+    "private": true,
+    "workspaces": [
+        "client",
+        "server",
+        "shared"
+    ],
+    "scripts": {
+        "dev": "concurrently \"npm run dev -w shared\" \"npm run dev -w server\" \"npm run dev -w client\"",
+        "build": "npm run build -ws",
+        "start": "concurrently \"npm run start -w server\" \"npm run start -w client\""
+    },
+    "devDependencies": {
+        "concurrently": "^9.0.0"
+    }
+}

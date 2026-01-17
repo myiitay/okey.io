@@ -30,13 +30,13 @@ export const dictionary: Record<string, Record<Language, string>> = {
 
     // Waiting Room
     "waiting_room": { tr: "BEKLEME ODASI", en: "WAITING ROOM" },
-    "room_code": { tr: "Oda Kodu", en: "Room Code" },
+    "room_code": { tr: "Kod", en: "Code" },
     "copy": { tr: "KOPYALA", en: "COPY" },
     "copied": { tr: "KOPYALANDI", en: "COPIED" },
     "players": { tr: "OYUNCULAR", en: "PLAYERS" },
     "host": { tr: "KURUCU", en: "KURUCU" },
     "you": { tr: "SEN", en: "YOU" },
-    "start_match": { tr: "OYUNU BAŞLAT 🚀", en: "START MATCH 🚀" },
+    "start_match": { tr: "OYUNU BAŞLAT", en: "START MATCH" },
     "waiting_host": { tr: "Kurucunun başlatması bekleniyor...", en: "Waiting for host to start..." },
     "waiting_players": { tr: "Oyuncu bekleniyor...", en: "Waiting for players..." },
     "min_player_warning": { tr: "Başlamak için en az 1 oyuncu (Test) gerekli...", en: "Waiting for at least 1 player to start..." },
@@ -91,6 +91,15 @@ export const dictionary: Record<string, Record<Language, string>> = {
     "spectator_info": { tr: "Sadece izleme modu • Müdahale edilemez", en: "Spectator mode only • No interaction" },
     "auto_arrange": { tr: "Otomatik Diz (Per)", en: "Auto Arrange" },
     "click_copy": { tr: "Kopyalamak için tıkla", en: "Click to copy" },
+    "single": { tr: "Tekli", en: "Single" },
+    "paired": { tr: "Eşli", en: "Paired" },
+    "team": { tr: "Takım", en: "Team" },
+    "join": { tr: "Katıl", en: "Join" },
+    "no_team": { tr: "Takımsızlar", en: "No Team" },
+    "team_selection_warning": { tr: "Eşli oyun için herkesin takım seçmesi gerekiyor!", en: "Everyone must select a team for paired game!" },
+    "add": { tr: "EKLE", en: "ADD" },
+    "deck_reshuffled": { tr: "TAŞLAR KARIŞTIRILDI", en: "DECK RESHUFFLED" },
+    "deck_reshuffled_desc": { tr: "Yerdeki taşlar bitti, atılan taşlar toplanıp karıştırılarak yeni deste yapıldı.", en: "Deck was empty. Discarded tiles were reshuffled into a new deck." },
 };
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -98,11 +107,11 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     useEffect(() => {
         // Auto-detect based on navigator
-        let targetLang: Language = 'en';
+        let targetLang: Language = 'tr';
         if (typeof navigator !== 'undefined') {
             const browserLang = navigator.language.toLowerCase();
-            if (browserLang.startsWith('tr')) {
-                targetLang = 'tr';
+            if (browserLang.startsWith('en')) {
+                targetLang = 'en';
             }
         }
 

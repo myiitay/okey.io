@@ -1,9 +1,8 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-
 import { GameState, RoomData } from './types';
-import { Tile } from './DraggableTile';
-import { arrangeByGroups } from '../../utils/gameLogics';
+import { soundManager } from '@/utils/soundManager';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface WinnerOverlayProps {
     gameState: GameState;
@@ -11,7 +10,6 @@ interface WinnerOverlayProps {
     roomData: RoomData;
     onRestartVote: () => void;
     onLeave: () => void;
-    className?: string;
 }
 
 export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
@@ -21,145 +19,129 @@ export const WinnerOverlay: React.FC<WinnerOverlayProps> = ({
     onRestartVote,
     onLeave
 }) => {
-    const isDraw = !gameState.winnerId;
-    const winner = !isDraw ? roomData.players.find((p) => p.id === gameState.winnerId) : null;
-    const isMe = !isDraw && winner?.id === currentUser?.id;
-    const is101Mode = roomData?.gameMode === '101';
+    const { t } = useLanguage();
+    const winner = roomData.players.find(p => p.id === gameState.winnerId);
+    const isMe = gameState.winnerId === currentUser.id;
 
-    // Restart state from roomData
-    const playersList = roomData?.players || [];
-    const voteCount = roomData?.restartCount || 0;
-    const totalPlayers = playersList.length;
-
-    const myPlayerState = playersList.find((p) => p.id === currentUser.id);
-    const iVoted = myPlayerState?.readyToRestart;
-
-    // Arrange winner's hand for better display
-    const winnerHandRaw = !isDraw && winner ? (gameState.players.find(p => p.id === winner.id)?.hand || []) : [];
-
-    let displayHand: any[] = [];
-    if (winnerHandRaw.length > 0) {
-        const okeyTiles = winnerHandRaw.filter(t => t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value);
-        const fakeJokers = winnerHandRaw.filter(t => t.color === 'fake');
-        const normalTiles = winnerHandRaw.filter(t => {
-            const isOkey = t.color === gameState.okeyTile.color && t.value === gameState.okeyTile.value;
-            return !isOkey && t.color !== 'fake';
-        });
-        displayHand = arrangeByGroups(normalTiles, okeyTiles, fakeJokers).filter(t => t !== null);
-    }
+    // Calculate restart status
+    const readyCount = roomData.players.filter(p => p.readyToRestart).length;
+    const totalPlayers = roomData.players.length;
+    const amIReady = roomData.players.find(p => p.id === currentUser.id)?.readyToRestart;
 
     return (
-        <AnimatePresence>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
             <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center"
+                initial={{ scale: 0.8, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                className="bg-[#1e1b2e] rounded-[3rem] shadow-2xl w-full max-w-xl overflow-hidden border-b-8 border-gray-900 border"
             >
-                <motion.div
-                    initial={{ scale: 0.8, y: 50 }}
-                    animate={{ scale: 1, y: 0 }}
-                    className="relative bg-[#1a1a2e] border-4 border-yellow-500/30 rounded-[3rem] p-12 max-w-2xl w-full text-center shadow-[0_0_100px_rgba(234,179,8,0.3)] overflow-hidden"
-                >
-                    {/* Background effects */}
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(234,179,8,0.1),transparent_70%)] animate-pulse-slow"></div>
-                    <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none bg-[url('/confetti.gif')] bg-cover"></div>
+                {/* Header Section */}
+                <div className={`p-8 text-center ${isMe ? 'bg-gradient-to-b from-yellow-500/20 to-orange-500/10' : 'bg-gradient-to-b from-indigo-500/20 to-purple-500/10'}`}>
+                    <motion.div
+                        initial={{ rotate: -10, scale: 0 }}
+                        animate={{ rotate: 0, scale: 1 }}
+                        transition={{ type: "spring", damping: 12 }}
+                        className="text-8xl mb-4"
+                    >
+                        {isMe ? '🏆' : '🎮'}
+                    </motion.div>
 
-                    <div className="relative z-10">
-                        {isDraw ? (
-                            <>
-                                <motion.div
-                                    animate={{ y: [0, -10, 0] }}
-                                    transition={{ duration: 2, repeat: Infinity }}
-                                    className="text-8xl mb-6 filter drop-shadow-[0_0_20px_rgba(255,255,255,0.3)]"
-                                >
-                                    🤝
-                                </motion.div>
-                                <h2 className="text-6xl font-black bg-gradient-to-r from-blue-300 via-white to-blue-300 bg-clip-text text-transparent mb-4 tracking-tight">
-                                    BERABERE!
-                                </h2>
-                                <p className="text-white/60 text-xl font-medium mb-12">
-                                    Bütün taşlar bitti, kazanan çıkmadı.
-                                </p>
-                            </>
-                        ) : isMe ? (
-                            <>
-                                <motion.div
-                                    animate={{ rotate: [0, 10, -10, 0], scale: [1, 1.2, 1] }}
-                                    transition={{ duration: 0.5, repeat: Infinity, repeatDelay: 2 }}
-                                    className="text-8xl mb-6 filter drop-shadow-[0_0_20px_rgba(234,179,8,0.5)]"
-                                >
-                                    🏆
-                                </motion.div>
-                                <h2 className="text-6xl font-black bg-gradient-to-r from-yellow-300 via-yellow-100 to-yellow-300 bg-clip-text text-transparent mb-4 tracking-tight">
-                                    KAZANDIN!
-                                </h2>
-                                <p className="text-yellow-100/60 text-xl font-medium mb-12">
-                                    Mükemmel bir oyun çıkardın!
-                                </p>
-                            </>
+                    <h2 className="text-4xl font-black text-white mb-2">
+                        {isMe ? 'TEBRİKLER!' : 'OYUN BİTTİ'}
+                    </h2>
+
+                    <div className="inline-block px-6 py-2 rounded-full bg-white/10 backdrop-blur-sm border border-white/10 text-xl font-bold text-yellow-400">
+                        {roomData.settings.isPaired ? (
+                            `${t("team") || "Takım"} ${winner?.team} (${winner?.name})`
                         ) : (
-                            <>
-                                <div className="text-7xl mb-6 grayscale opacity-80">👏</div>
-                                <h2 className="text-5xl font-black text-white mb-2 tracking-tight">
-                                    {winner?.name || "Biri"} Kazandı
-                                </h2>
-                                <p className="text-white/40 text-lg font-medium mb-8">
-                                    Bir sonraki elde şansın dönebilir!
-                                </p>
-                            </>
-                        )}
+                            winner?.name
+                        )} {gameState.winType === 'double' ? 'ÇİFTE BİTİRDİ!' : 'BİTİRDİ!'}
+                    </div>
+                </div>
 
+                {/* Content Section */}
+                <div className="p-8 space-y-8">
+                    {/* Score Summary (Simplified for now) */}
+                    <div className="bg-black/20 rounded-[2rem] p-6 border border-white/5">
+                        <h3 className="text-center text-xs font-black text-white/30 uppercase tracking-widest mb-4">PUAN DURUMU</h3>
+                        <div className="space-y-3">
+                            {roomData.settings.isPaired ? (
+                                <>
+                                    {[1, 2].map(teamNum => (
+                                        <div key={teamNum} className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-xl">👥</span>
+                                                <span className={`font-bold ${winner?.team === teamNum ? 'text-yellow-400' : 'text-white/70'}`}>
+                                                    {t("team") || "Takım"} {teamNum}
+                                                </span>
+                                            </div>
+                                            <div className="font-mono font-black text-white">
+                                                {roomData.winScores[`Team ${teamNum}`] || 0}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </>
+                            ) : (
+                                roomData.players.map(p => (
+                                    <div key={p.id} className="flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-xl">{p.avatar}</span>
+                                            <span className={`font-bold ${p.id === gameState.winnerId ? 'text-yellow-400' : 'text-white/70'}`}>
+                                                {p.name}
+                                            </span>
+                                        </div>
+                                        <div className="font-mono font-black text-white">
+                                            {roomData.winScores[p.name] || 0}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
 
+                    {/* Actions */}
+                    <div className="flex flex-col gap-4">
+                        <div className="text-center">
+                            <p className="text-white/40 text-sm font-bold mb-2">
+                                Yeni oyun için hazır mısın? ({readyCount}/{totalPlayers})
+                            </p>
+                        </div>
 
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="flex gap-4">
                             <button
-                                onClick={onRestartVote}
-                                disabled={iVoted}
-                                className={`
-                                    relative overflow-hidden group py-5 rounded-2xl font-black text-xl transition-all duration-300
-                                    ${iVoted
-                                        ? 'bg-green-500/20 text-green-400 cursor-default border-2 border-green-500/50'
-                                        : 'bg-white text-black hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(255,255,255,0.3)]'
-                                    }
-                                `}
+                                onClick={() => {
+                                    soundManager.play('click');
+                                    onRestartVote();
+                                }}
+                                disabled={amIReady}
+                                className={`flex-1 py-5 rounded-2xl font-black text-xl shadow-xl transition-all transform active:scale-95 ${amIReady
+                                    ? 'bg-green-500/20 text-green-400 cursor-not-allowed border-2 border-green-500/30'
+                                    : 'bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:scale-105 active:translate-y-1'
+                                    }`}
                             >
-                                <div className="relative z-10 flex items-center justify-center gap-3">
-                                    {iVoted ? (
-                                        <>
-                                            <span>✅ HAZIRSIN</span>
-                                            <span className="bg-black/20 px-3 py-1 rounded-lg text-sm">
-                                                {voteCount}/{totalPlayers}
-                                            </span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span>TEKRAR OYNA</span>
-                                            <span className="bg-black/10 px-3 py-1 rounded-lg text-sm">
-                                                {voteCount}/{totalPlayers}
-                                            </span>
-                                        </>
-                                    )}
-                                </div>
-                                {iVoted && (
-                                    <motion.div
-                                        initial={{ width: 0 }}
-                                        animate={{ width: '100%' }}
-                                        className="absolute inset-0 bg-green-500/10"
-                                    />
-                                )}
+                                {amIReady ? 'HAZIR!' : 'YENİDEN BAŞLAT'}
                             </button>
 
                             <button
-                                onClick={onLeave}
-                                className="bg-white/5 hover:bg-white/10 border-2 border-white/10 text-white py-5 rounded-2xl font-bold text-xl transition-all hover:border-white/30"
+                                onClick={() => {
+                                    soundManager.play('click');
+                                    onLeave();
+                                }}
+                                className="px-8 py-5 bg-white/5 hover:bg-red-500/10 text-white/50 hover:text-red-400 rounded-2xl font-black transition-all border border-white/10"
                             >
-                                MENÜYE DÖN
+                                AYRIL
                             </button>
                         </div>
                     </div>
-                </motion.div>
+                </div>
+
+                {/* Footer Tip */}
+                <div className="px-8 py-4 bg-black/40 text-center">
+                    <p className="text-[10px] text-white/20 font-bold uppercase tracking-widest">
+                        Tüm oyuncular hazır olduğunda yeni el başlar
+                    </p>
+                </div>
             </motion.div>
-        </AnimatePresence>
+        </div>
     );
 };

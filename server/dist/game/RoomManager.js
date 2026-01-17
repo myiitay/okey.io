@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RoomManager = void 0;
 const OkeyGame_1 = require("./OkeyGame");
+const shared_1 = require("@okey/shared");
 const crypto_1 = require("crypto");
 class RoomManager {
     constructor(io) {
@@ -69,23 +70,19 @@ class RoomManager {
             socket.emit('forceRedirect', '/');
         });
         socket.on('createRoom', (payload) => {
-            let name = "";
-            let avatar = "👤"; // Default
-            let gameMode = 'standard'; // Default
+            let rawData = payload;
             if (typeof payload === 'string') {
-                name = payload;
+                rawData = { name: payload };
             }
-            else if (payload && typeof payload === 'object') {
-                name = payload.name;
-                if (payload.avatar)
-                    avatar = payload.avatar;
-                if (payload.gameMode)
-                    gameMode = payload.gameMode;
-            }
-            if (!name) {
-                socket.emit('error', 'Nickname is required');
+            const result = shared_1.CreateRoomSchema.safeParse(rawData);
+            if (!result.success) {
+                socket.emit('error', result.error.issues[0].message);
                 return;
             }
+            const { name, avatar: rawAvatar, frameId: rawFrameId, gameMode: rawGameMode } = result.data;
+            const avatar = rawAvatar || "👤";
+            const frameId = rawFrameId || "none";
+            const gameMode = rawGameMode || 'standard';
             // --- LEAK PREVENTION: Remove from old room if any ---
             const existingPlayer = this.players.get(socket.id);
             if (existingPlayer && existingPlayer.roomId) {
@@ -101,7 +98,9 @@ class RoomManager {
                 token,
                 name,
                 avatar,
-                connected: true
+                frameId,
+                connected: true,
+                isReady: true // Host is always ready
             };
             this.sessions.set(token, newPlayer);
             this.players.set(socket.id, newPlayer);
@@ -116,8 +115,9 @@ class RoomManager {
                 spectators: [],
                 settings: {
                     turnTime: 30,
-                    targetScore: 20,
-                    isPublic: true
+                    targetScore: 3,
+                    isPublic: true,
+                    isPaired: false
                 }
             };
             this.rooms.set(code, room);
@@ -135,17 +135,22 @@ class RoomManager {
                 socket.emit('updateRoom', this.getRoomData(code));
             }
             else {
-                socket.emit('error', 'Room not found');
+                socket.emit('error', 'Oda bulunamadı');
             }
         });
         socket.on('getRooms', () => {
             this.handleGetRooms(socket);
         });
         socket.on('joinRoom', (payload) => {
-            const { code, name, avatar } = payload;
+            const result = shared_1.JoinRoomSchema.safeParse(payload);
+            if (!result.success) {
+                socket.emit('error', result.error.issues[0].message);
+                return;
+            }
+            const { code, name, avatar, frameId } = result.data;
             const room = this.rooms.get(code);
             if (!room) {
-                socket.emit('error', 'Room not found');
+                socket.emit('error', 'Oda bulunamadı');
                 return;
             }
             if (room.players.length >= room.maxPlayers) {
@@ -153,8 +158,9 @@ class RoomManager {
                 const spectator = {
                     id: socket.id,
                     token: (0, crypto_1.randomUUID)(),
-                    name: name + " (İzleyici)",
+                    name: name + (socket.handshake.query.lang === 'en' ? " (Spectator)" : " (İzleyici)"),
                     avatar: avatar || "👤",
+                    frameId: frameId,
                     connected: true,
                     roomId: code
                 };
@@ -167,7 +173,7 @@ class RoomManager {
                 return;
             }
             if (room.game) {
-                socket.emit('error', 'Game already started');
+                socket.emit('error', 'Oyun zaten başladı');
                 return;
             }
             // --- LEAK PREVENTION: Remove from old room if any ---
@@ -185,6 +191,7 @@ class RoomManager {
                 token,
                 name,
                 avatar: avatar || "👤",
+                frameId,
                 connected: true,
                 roomId: code
             };
@@ -207,20 +214,24 @@ class RoomManager {
                 return;
             // Only host can add bots (Host is index 0)
             if (room.players[0].token !== player.token) {
-                socket.emit('error', 'Only host can add bots.');
+                socket.emit('error', 'Sadece kurucu bot ekleyebilir.');
                 return;
             }
             if (room.players.length >= room.maxPlayers) {
-                socket.emit('error', 'Room is full');
+                socket.emit('error', 'Oda dolu');
                 return;
             }
             const botId = `bot_${(0, crypto_1.randomUUID)()}`;
-            const botAvatars = ["🤖", "🦾", "🦿", "📡", "🛰️", "🛸"];
-            const botNames = ["Robot-1", "Bot-Alpha", "Okey-X", "Mech", "Cypher", "Turbo"];
+            const botAvatars = ["👨🏻‍🌾", "👴🏻", "👨🏻", "🧔🏻", "👳🏻‍♂️", "👨🏽‍🌾", "👴🏽", "👨🏽", "👳🏽‍♂️"];
+            const botNames = [
+                "İdris Amca", "Hamit Dayı", "Abdullah Efendi", "Abidin Başgan",
+                "Yakup Emmi", "Osman Ağa", "Recep Dayı", "Şaban Emmi",
+                "Ramazan Usta", "Bekir Ortak", "Cemal Dayı", "Dursun Abi"
+            ];
             const botPlayer = {
                 id: botId,
                 token: botId,
-                name: botNames[Math.floor(Math.random() * botNames.length)] + "_" + Math.floor(Math.random() * 100),
+                name: botNames[Math.floor(Math.random() * botNames.length)],
                 avatar: botAvatars[Math.floor(Math.random() * botAvatars.length)],
                 connected: true,
                 roomId: room.id,
@@ -248,7 +259,7 @@ class RoomManager {
                 return;
             // Only host can kick (Host is index 0)
             if (room.players[0].token !== player.token) {
-                socket.emit('error', 'Only host can kick players.');
+                socket.emit('error', 'Sadece kurucu oyuncu atabilir.');
                 return;
             }
             if (targetId === player.id)
@@ -267,100 +278,28 @@ class RoomManager {
             if (!room)
                 return;
             if (room.players[0].token !== player.token) {
-                socket.emit('error', 'Only the host can start the game');
+                socket.emit('error', 'Sadece kurucu oyunu başlatabilir');
                 return;
             }
             if (room.players.length !== 2 && room.players.length !== 4) {
-                socket.emit('error', 'Game requires exactly 2 or 4 players');
+                socket.emit('error', 'Oyun için tam olarak 2 veya 4 oyuncu gerekiyor');
+                return;
+            }
+            // Check if all players (inclusive) are ready
+            // Bots are always ready. Host (index 0) is always ready since they click start.
+            const allReady = room.players.every((p, idx) => idx === 0 || p.isReady || p.isBot);
+            if (!allReady) {
+                socket.emit('error', 'Başlamak için herkesin hazır olması gerekiyor!');
                 return;
             }
             if (room.game) {
-                socket.emit('error', 'Game already started');
+                socket.emit('error', 'Oyun zaten başladı');
                 return;
             }
-            // Start Countdown sequence
-            this.io.to(room.id).emit('roomCountdown', 3);
-            setTimeout(() => {
-                if (!this.rooms.has(room.id) || room.players.length < 1)
-                    return;
-                console.log(`Starting game in room ${room.id}`);
-                try {
-                    // Start logic...
-                    // Just map current players. For reconnection, we need to map persist IDs if we wanted to be super safe
-                    // But OkeyGame uses IDs. We'll use socket IDs as before, but ensure we update them on rejoin?
-                    // ISSUE: OkeyGame uses 'id' string. If we use socket.id, reconnection changes the ID.
-                    // FIX: We must use a stable ID for OkeyGame. 'token' is perfect, or 'name'. 
-                    // Let's use 'token' as the game player ID. 
-                    // Wait, frontend uses socket.id to identify 'me'. 
-                    // If we change OkeyGame to use token, frontend logic filtering 'players.find(p => p.id === currentUser.id)' might break if currentUser.id is socket.id.
-                    // Solution: currentUser.id on client should be the TOKEN or we keep mapping.
-                    // Easier migration: OkeyGame uses socket.id, but on rejoin we UPDATE OkeyGame's internal player ID mapping?
-                    // Or better: OkeyGame uses `token` (Stable ID).
-                    // We need to tell Client "Your ID is <token>".
-                    // Currently Client `socket.id` is used.
-                    // Let's switch OkeyGame to use `socket.id` BUT update it on Rejoin.
-                    // OkeyGame has private `playerIds`. It needs a method `updatePlayerId(oldId, newId)`.
-                    // Actually, simpler: Let's use socket.id as the key in OkeyGame, 
-                    // and when player rejoins, we find the OLD socket ID in OkeyGame state and update it to NEW socket ID.
-                    room.game = new OkeyGame_1.OkeyGame(room.players.map(p => p.id), (gameState) => {
-                        // Win detection
-                        if (gameState.status === 'FINISHED' && gameState.winnerId) {
-                            // winnerId is socket ID. We need to find player by that ID (or historical ID if they left?)
-                            // If they left, we might not find them in current `this.players`.
-                            // But they are in `room.players`.
-                            const winner = room.players.find(p => p.id === gameState.winnerId);
-                            if (winner) {
-                                const currentScore = room.winScores.get(winner.name) || 0;
-                                room.winScores.set(winner.name, currentScore + 1);
-                                this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
-                            }
-                        }
-                        else if (gameState.status === 'FINISHED' && !gameState.winnerId) {
-                            // Draw logic
-                            console.log(`[RoomManager] Game in room ${room.id} ended in a draw.`);
-                            const drawMsg = {
-                                sender: 'Sistem',
-                                text: 'Oyun berabere bitti! Bütün taşlar tükendi.',
-                                time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-                                isSystem: true
-                            };
-                            this.io.to(room.id).emit('chatMessage', drawMsg);
-                        }
-                        this.broadcastGameState(room.id, gameState);
-                        // AUTO-RESTART VOTE FOR BOTS
-                        if (gameState.status === 'FINISHED') {
-                            room.players.forEach(p => {
-                                if (p.isBot) {
-                                    room.restartVotes.add(p.id);
-                                }
-                            });
-                            // Broadcast update so clients see bots are ready
-                            this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
-                            // Check if everyone (including real players) is ready? 
-                            // Real players still need to click.
-                            // But if ONLY bots were left (edge case), it would auto restart? 
-                            // Bots + 1 Human -> Human needs to click.
-                            this.checkRestartCondition(room);
-                        }
-                    });
-                    const initialState = room.game.start();
-                    room.restartVotes.clear();
-                    this.broadcastGameState(room.id, initialState, 'gameStarted');
-                    this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
-                    setTimeout(() => {
-                        if (room.game) {
-                            this.io.to(room.id).emit('jokerRevealed', {
-                                indicator: initialState.indicator,
-                                okeyTile: initialState.okeyTile
-                            });
-                        }
-                    }, 3000);
-                }
-                catch (e) {
-                    console.error(`[startGame] Error:`, e);
-                    this.io.to(room.id).emit('error', 'Failed to start game: ' + e.message);
-                }
-            }, 3000);
+            // Start Game Immediately
+            if (!this.rooms.has(room.id) || room.players.length < 1)
+                return;
+            this.startRoomGame(room);
         });
         socket.on('restartVote', () => {
             const player = this.players.get(socket.id);
@@ -434,7 +373,7 @@ class RoomManager {
                 return;
             // Only host can update settings
             if (room.players[0].id !== player.id) {
-                socket.emit('error', 'Only host can update settings');
+                socket.emit('error', 'Sadece kurucu ayarları güncelleyebilir');
                 return;
             }
             room.settings = { ...room.settings, ...newSettings };
@@ -452,6 +391,16 @@ class RoomManager {
                 playerId: player.id,
                 emote: emote
             });
+        });
+        socket.on('joinTeam', (team) => {
+            const player = this.players.get(socket.id);
+            if (!player || !player.roomId)
+                return;
+            const room = this.rooms.get(player.roomId);
+            if (!room || room.game)
+                return;
+            player.team = team;
+            this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
         });
         socket.on('disconnect', () => {
             console.log(`User disconnected: ${socket.id}`);
@@ -575,10 +524,12 @@ class RoomManager {
                     name: p.name,
                     id: p.id,
                     avatar: p.avatar,
+                    frameId: p.frameId,
                     readyToRestart: ((_a = room.restartVotes) === null || _a === void 0 ? void 0 : _a.has(p.id)) || false,
                     connected: p.connected, // Send connection status
                     isReady: p.isReady,
-                    isBot: p.isBot
+                    isBot: p.isBot,
+                    team: p.team
                 });
             }),
             winScores: room.winScores ? Object.fromEntries(room.winScores) : {},
@@ -589,17 +540,26 @@ class RoomManager {
         };
     }
     sanitizeGameState(state, targetPlayerId) {
-        const deepCopy = JSON.parse(JSON.stringify(state));
-        deepCopy.players = deepCopy.players.map((p) => {
-            if (p.id !== targetPlayerId) {
-                return {
-                    ...p,
-                    hand: []
-                };
-            }
-            return p;
-        });
-        return deepCopy;
+        // Optimization: Shallow copy root, reconstruct players array.
+        // Avoid JSON.parse/stringify for better performance.
+        return {
+            ...state, // Shallow copy primitives
+            players: state.players.map(p => {
+                if (p.id !== targetPlayerId && targetPlayerId !== "SPECTATOR") { // Spectator sees hidden
+                    // NOTE: "SPECTATOR" should theoretically see everything if we want? 
+                    // But usually spectators shouldn't see hands either to prevent cheating via dual screen.
+                    // Current logic: p.id !== targetPlayerId hides hand.
+                    // If targetPlayerId is "SPECTATOR", it is !== p.id (which is socket ID).
+                    // So Spectators see HIDDEN hands. Correct.
+                    return {
+                        ...p,
+                        hand: [] // Hide hand
+                    };
+                }
+                // If it IS the player, return full object (or shallow copy if we mutate later, but we don't)
+                return p;
+            })
+        };
     }
     broadcastGameState(roomId, state, eventName = 'gameState') {
         const room = this.rooms.get(roomId);
@@ -618,12 +578,20 @@ class RoomManager {
                 this.io.to(spectator.id).emit(eventName, sanitized);
             }
         });
-        // --- BOT LOGIC TRIGGER ---
+        // --- BOT / AFK LOGIC TRIGGER ---
         if (state.status === 'PLAYING') {
             const currentPlayerId = state.players[state.turnIndex].id;
-            const currentPlayer = room.players.find(p => p.id === currentPlayerId);
-            if (currentPlayer && currentPlayer.isBot) {
-                this.triggerBotMove(roomId, currentPlayerId);
+            const roomPlayer = room.players.find(p => p.id === currentPlayerId);
+            if (roomPlayer) {
+                if (roomPlayer.isBot) {
+                    this.triggerBotMove(roomId, currentPlayerId);
+                }
+                else if (!roomPlayer.connected) {
+                    // Disconnected player takeover logic: 
+                    // Wait a bit (grace period) then bot takes one turn
+                    console.log(`[Takeover] Triggering bot takeover for disconnected player ${roomPlayer.name}`);
+                    this.triggerBotMove(roomId, currentPlayerId, 10000); // 10s grace period
+                }
             }
         }
     }
@@ -640,56 +608,100 @@ class RoomManager {
                 isSystem: true
             };
             this.io.to(room.id).emit('chatMessage', readyMsg);
-            // AUTO START DIRECTLY (More robust than asking client)
-            // Re-using the logic from 'startGame' event but internally
-            // We need to simulate the start sequence
-            this.io.to(room.id).emit('roomCountdown', 3);
-            setTimeout(() => {
-                if (!this.rooms.has(room.id) || room.players.length < 1)
-                    return;
-                // Initialize Game Logic reused
-                // Note: We need to bind the callback properly
-                try {
-                    // ... Copying game init logic ...
-                    // To avoid code duplication, I should have extracted `initGame(room)`
-                    // For now, I will emit 'autoTriggerStart' to Host as before IF host is connected,
-                    // BUT if host is not connected (or is bot?), we should handle it.
-                    // The user said "wait for no one".
-                    // If I rely on 'autoTriggerStart', I rely on the Host Client.
-                    // If Host is bot? (Not possible currently).
-                    // If Host disconnected but room alive (reconnect timer)?
-                    // Let's stick to 'autoTriggerStart' for safety of flow (Host is master),
-                    // BUT add a fallback or ensure it works.
-                    const host = room.players[0];
-                    if (host && host.connected && !host.isBot) {
-                        this.io.to(host.id).emit('autoTriggerStart');
-                    }
-                    else {
-                        // Fallback: If host is not responsive, just start it server side?
-                        // Implementing full server-side start to be "Polish"
-                        // We need to call the exact same logic code.
-                        // For now, I will trust autoTriggerStart but log it.
-                        console.log(`[RoomManager] All ready. Triggering host ${host === null || host === void 0 ? void 0 : host.name} to start.`);
-                        // If host doesn't emit 'startGame', it hangs. 
-                        // Refactoring `startGame` is better but risky in this step.
-                        // I will stick to autoTriggerStart for now as it was working.
-                        if (host)
-                            this.io.to(host.id).emit('autoTriggerStart');
-                    }
-                }
-                catch (e) {
-                    console.error(e);
-                }
-            }, 1000); // 1s delay before countdown starts (so users see "Ready" state briefly)
+            // Reliable Start: Call internal method directly
+            this.startRoomGame(room);
         }
     }
-    async triggerBotMove(roomId, botId) {
+    startRoomGame(room) {
+        if (!this.rooms.has(room.id) || room.players.length < 1)
+            return;
+        console.log(`Starting game in room ${room.id} (Internal Trigger)`);
+        try {
+            let playerOrder = room.players;
+            if (room.settings.isPaired) {
+                // For paired game, we need 4 players and they must have teams
+                // We'll auto-assign teams if they are missing
+                if (room.players.length !== 4) {
+                    throw new Error("Eşli oyun için 4 oyuncu gereklidir.");
+                }
+                const team1 = room.players.filter(p => p.team === 1);
+                const team2 = room.players.filter(p => p.team === 2);
+                const undelared = room.players.filter(p => !p.team);
+                // Auto balance teams if anyone hasn't chosen
+                undelared.forEach(p => {
+                    if (team1.length < 2) {
+                        p.team = 1;
+                        team1.push(p);
+                    }
+                    else {
+                        p.team = 2;
+                        team2.push(p);
+                    }
+                });
+                if (team1.length !== 2 || team2.length !== 2) {
+                    throw new Error("Takımlar dengeli değil (2 vs 2 olmalı).");
+                }
+                // Arrange: Team1[0], Team2[0], Team1[1], Team2[1]
+                playerOrder = [team1[0], team2[0], team1[1], team2[1]];
+            }
+            room.game = new OkeyGame_1.OkeyGame(playerOrder.map(p => p.id), (gameState) => {
+                // Win detection reuse
+                if (gameState.status === 'FINISHED' && gameState.winnerId) {
+                    const winner = room.players.find(p => p.id === gameState.winnerId);
+                    if (winner) {
+                        if (room.settings.isPaired && winner.team) {
+                            // Team win
+                            const teamName = `Team ${winner.team}`;
+                            const currentScore = room.winScores.get(teamName) || 0;
+                            room.winScores.set(teamName, currentScore + 1);
+                        }
+                        else {
+                            // Individual win
+                            const currentScore = room.winScores.get(winner.name) || 0;
+                            room.winScores.set(winner.name, currentScore + 1);
+                        }
+                        this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+                    }
+                }
+                else if (gameState.status === 'FINISHED' && !gameState.winnerId) {
+                    // Draw logic
+                    console.log(`[RoomManager] Game in room ${room.id} ended in a draw.`);
+                    const drawMsg = {
+                        sender: 'Sistem',
+                        text: 'Oyun berabere bitti! Bütün taşlar tükendi.',
+                        time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                        isSystem: true
+                    };
+                    this.io.to(room.id).emit('chatMessage', drawMsg);
+                }
+                this.broadcastGameState(room.id, gameState);
+                if (gameState.status === 'FINISHED') {
+                    room.players.forEach(p => {
+                        if (p.isBot) {
+                            room.restartVotes.add(p.id);
+                        }
+                    });
+                    this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+                    this.checkRestartCondition(room);
+                }
+            });
+            const initialState = room.game.start();
+            room.restartVotes.clear();
+            this.broadcastGameState(room.id, initialState, 'gameStarted');
+            this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+        }
+        catch (e) {
+            console.error(`[startRoomGame] Error:`, e);
+            this.io.to(room.id).emit('error', 'Failed to start game: ' + e.message);
+        }
+    }
+    async triggerBotMove(roomId, botId, delay = 2000) {
         var _a;
         const room = this.rooms.get(roomId);
         if (!room || !room.game)
             return;
-        // Wait a bit for "thinking"
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait a bit for "thinking" or grace period
+        await new Promise(resolve => setTimeout(resolve, delay));
         try {
             const state = room.game.getFullState();
             const botState = state.players.find(p => p.id === botId);

@@ -116,7 +116,7 @@ export const Chat: React.FC<{ socket: Socket }> = ({ socket }) => {
                 <div className="p-2 bg-white/5 border-t border-white/5 space-y-2">
                     {/* Presets Bar */}
                     <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-hide">
-                        {["Bol Şans", "Tebrikler!", "Eyvallah", "Hadi!", "☕ Kahve Ismarla!"].map(txt => (
+                        {["Hey!", "Bol Şans", "Tebrikler!", "Eyvallah", "Hadi!", "☕ Kahve Ismarla!"].map(txt => (
                             <button
                                 key={txt}
                                 onClick={() => socket.emit('sendMessage', txt)}

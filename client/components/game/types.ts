@@ -1,49 +1,17 @@
-export interface TileData {
-    id: number;
-    color: 'red' | 'black' | 'blue' | 'yellow' | 'fake';
-    value: number;
-}
+import { Tile, GameState as SharedGameState, PlayerState as SharedPlayerState, RoomSettings as SharedRoomSettings, RoomData as SharedRoomData, Player } from '@okey/shared';
 
-export interface PlayerState {
-    id: string;
-    hand: TileData[];
-    discards: TileData[];
-    isTurn: boolean;
-}
+export type TileData = Tile;
 
-export interface GameState {
-    players: PlayerState[];
-    indicator: TileData;
-    okeyTile: TileData;
-    centerCount: number;
-    turnIndex: number;
-    status: 'PLAYING' | 'FINISHED';
-    winnerId?: string;
-    turnTimer: number;
-}
+export type PlayerState = SharedPlayerState;
 
-export interface RoomPlayer {
-    id: string;
-    name: string;
-    avatar: string;
-    connected: boolean;
-    isReady?: boolean;
-    isBot?: boolean;
-    readyToRestart?: boolean;
-}
+export type GameState = SharedGameState;
 
-export interface RoomSettings {
-    turnTime: number;
-    targetScore: number;
-    isPublic: boolean;
-}
+// RoomPlayer matches one element of the RoomData.players array
+export type RoomPlayer = SharedRoomData['players'][number];
 
-export interface RoomData {
-    id: string;
-    players: RoomPlayer[];
-    winScores: Record<string, number>;
-    restartCount: number;
-    gameStarted: boolean;
-    gameMode: '101' | 'standard';
-    settings: RoomSettings;
-}
+export type RoomSettings = SharedRoomSettings;
+
+export type RoomData = SharedRoomData;
+
+export type GameState101 = import('@okey/shared').GameState101;
+export type OpenedSet = import('@okey/shared').OpenedSet;
