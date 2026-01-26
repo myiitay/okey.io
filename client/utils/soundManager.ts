@@ -42,6 +42,11 @@ class SoundManager {
             countdown_tick: "https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3", // Soft tick
             countdown_start: "https://assets.mixkit.co/active_storage/sfx/2018/2018-preview.mp3", // Gentle go
 
+            // Dealing Animation Sounds
+            box_slide: "https://assets.mixkit.co/active_storage/sfx/2015/2015-preview.mp3", // Stack slide (reused shuffle)
+            card_flip: "https://assets.mixkit.co/active_storage/sfx/2573/2573-preview.mp3", // Card flip (reused flip)
+            card_deal: "https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3", // Rapid deal (reused draw)
+
             // Results - Positive but not overwhelming
             victory: "https://assets.mixkit.co/active_storage/sfx/2018/2018-preview.mp3", // Pleasant victory
             win: "https://assets.mixkit.co/active_storage/sfx/2018/2018-preview.mp3", // Happy win

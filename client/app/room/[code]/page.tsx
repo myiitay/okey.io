@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/utils/socket";
 import { GameBoard } from "@/components/GameBoard";
-import { GameBoard101 } from "@/components/GameBoard101";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { soundManager } from "@/utils/soundManager";
 
@@ -339,29 +338,16 @@ export default function RoomPage() {
         );
     }
 
-    const is101Mode = roomData?.gameMode === '101';
+    const is101Mode = false;
 
-    if (!roomData) return <div className={`h-screen ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} text-white flex flex-col gap-4 items-center justify-center font-bold text-2xl`}>
-        <div className={`w-16 h-16 border-4 ${is101Mode ? 'border-t-red-500 border-b-red-500' : 'border-t-yellow-400 border-b-yellow-400'} border-r-transparent border-l-transparent rounded-full animate-spin`}></div>
+    if (!roomData) return <div className="h-screen bg-[#0f0c29] text-white flex flex-col gap-4 items-center justify-center font-bold text-2xl">
+        <div className="w-16 h-16 border-4 border-t-yellow-400 border-b-yellow-400 border-r-transparent border-l-transparent rounded-full animate-spin"></div>
         <div className="animate-pulse tracking-widest">{t("connecting")}</div>
     </div>;
 
 
 
     if (roomData.gameStarted) {
-        if (is101Mode) {
-            return (
-                <GameBoard101
-                    roomCode={code as string}
-                    currentUser={currentUser}
-                    gameMode={'101'}
-                    isSpectator={isSpectator}
-                    initialGameState={initialGameState}
-                    isFreshStart={isFreshStart}
-                    players={roomData.players}
-                />
-            );
-        }
         return (
             <GameBoard
                 roomCode={code as string}
@@ -378,9 +364,9 @@ export default function RoomPage() {
 
     // Waiting Room UI (Premium Glassmorphism)
     return (
-        <div className={`min-h-screen ${is101Mode ? 'bg-[#2a0808]' : 'bg-[#0f0c29]'} flex flex-col items-center justify-center relative overflow-hidden font-sans p-4`}>
+        <div className="min-h-screen bg-[#0f0c29] flex flex-col items-center justify-center relative overflow-hidden font-sans p-4">
             {/* Background Atmosphere */}
-            <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-red-900/40 via-[#2a0808] to-rose-900/40' : 'bg-gradient-to-br from-purple-900/40 via-[#0f0c29] to-blue-900/40'} pointer-events-none`}></div>
+            <div className="absolute inset-0 bg-gradient-to-br from-purple-900/40 via-[#0f0c29] to-blue-900/40 pointer-events-none"></div>
 
             {isSpectator && (
                 <div className="absolute top-4 left-4 z-50 bg-blue-500/80 backdrop-blur-md px-6 py-2 rounded-full border border-blue-400/50 text-white font-bold animate-pulse shadow-[0_0_20px_rgba(59,130,246,0.5)]">
@@ -392,8 +378,8 @@ export default function RoomPage() {
                 <SoundToggle />
             </div>
 
-            <div className={`absolute top-0 right-0 w-[500px] h-[500px] ${is101Mode ? 'bg-red-600/20' : 'bg-purple-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`}></div>
-            <div className={`absolute bottom-0 left-0 w-[500px] h-[500px] ${is101Mode ? 'bg-rose-600/20' : 'bg-blue-600/20'} rounded-full blur-[100px] pointer-events-none animate-pulse`} style={{ animationDelay: "1s" }}></div>
+            <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[100px] pointer-events-none animate-pulse"></div>
+            <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[100px] pointer-events-none animate-pulse" style={{ animationDelay: "1s" }}></div>
 
             {/* Quick Emotes Panel */}
             <div className="absolute bottom-6 left-6 z-50 flex gap-2 flex-wrap max-w-[50vw]">
@@ -423,13 +409,6 @@ export default function RoomPage() {
 
                 {/* LEFT COL: INFO CARD */}
                 <div className="flex flex-col gap-6">
-                    {/* 101 Mode Label */}
-                    {is101Mode && (
-                        <div className="bg-red-600/20 backdrop-blur-xl rounded-3xl p-6 border border-red-500/30 shadow-2xl flex flex-col items-center justify-center animate-pulse">
-                            <div className="text-4xl font-black text-white tracking-[0.2em] drop-shadow-[0_0_15px_rgba(220,38,38,0.5)]">101</div>
-                            <div className="text-[10px] font-bold text-red-400 uppercase tracking-widest mt-1">Okey 101 Modu</div>
-                        </div>
-                    )}
 
                     {/* Room Code Card */}
                     <div className="bg-white/5 backdrop-blur-xl rounded-[2rem] p-8 border border-white/10 shadow-2xl relative overflow-hidden group hover:border-white/20 transition-all duration-500">

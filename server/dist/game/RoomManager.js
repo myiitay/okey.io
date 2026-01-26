@@ -542,9 +542,9 @@ class RoomManager {
     sanitizeGameState(state, targetPlayerId) {
         // Optimization: Shallow copy root, reconstruct players array.
         // Avoid JSON.parse/stringify for better performance.
-        return {
+        const sanitizedParams = {
             ...state, // Shallow copy primitives
-            players: state.players.map(p => {
+            players: state.players.map((p) => {
                 if (p.id !== targetPlayerId && targetPlayerId !== "SPECTATOR") { // Spectator sees hidden
                     // NOTE: "SPECTATOR" should theoretically see everything if we want? 
                     // But usually spectators shouldn't see hands either to prevent cheating via dual screen.
@@ -560,6 +560,7 @@ class RoomManager {
                 return p;
             })
         };
+        return sanitizedParams;
     }
     broadcastGameState(roomId, state, eventName = 'gameState') {
         const room = this.rooms.get(roomId);

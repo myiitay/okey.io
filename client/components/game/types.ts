@@ -12,6 +12,3 @@ export type RoomPlayer = SharedRoomData['players'][number];
 export type RoomSettings = SharedRoomSettings;
 
 export type RoomData = SharedRoomData;
-
-export type GameState101 = import('@okey/shared').GameState101;
-export type OpenedSet = import('@okey/shared').OpenedSet;

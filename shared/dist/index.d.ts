@@ -46,7 +46,7 @@ export interface RoomPublic {
     count: number;
     max: number;
     status: 'Playing' | 'Waiting';
-    mode: '101' | 'standard';
+    mode: 'standard';
 }
 export interface RoomData {
     id: string;
@@ -66,8 +66,7 @@ export interface RoomData {
     };
     restartCount: number;
     gameStarted: boolean;
-    gameMode: '101' | 'standard';
+    gameMode: 'standard';
     settings: RoomSettings;
 }
 export * from './schemas';
-export * from './types101';

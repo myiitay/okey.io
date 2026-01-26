@@ -4,7 +4,7 @@ export const CreateRoomSchema = z.object({
     name: z.string().min(1, "İsim gerekli").max(20, "İsim çok uzun"),
     avatar: z.string().optional(),
     frameId: z.string().optional(),
-    gameMode: z.enum(['standard', '101']).optional().default('standard')
+    gameMode: z.enum(['standard']).optional().default('standard')
 });
 
 export const JoinRoomSchema = z.object({

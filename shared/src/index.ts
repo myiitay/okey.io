@@ -52,7 +52,7 @@ export interface RoomPublic {
     count: number;
     max: number;
     status: 'Playing' | 'Waiting';
-    mode: '101' | 'standard';
+    mode: 'standard';
 }
 
 export interface RoomData {
@@ -71,9 +71,8 @@ export interface RoomData {
     winScores: { [key: string]: number };
     restartCount: number;
     gameStarted: boolean;
-    gameMode: '101' | 'standard';
+    gameMode: 'standard';
     settings: RoomSettings;
 }
 
 export * from './schemas';
-export * from './types101';

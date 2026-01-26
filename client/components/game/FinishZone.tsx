@@ -3,12 +3,12 @@ import { useDroppable } from '@dnd-kit/core';
 
 interface FinishZoneProps {
     isMyTurn: boolean;
-    gameMode?: 'standard' | '101';
+    gameMode?: 'standard';
 }
 
 export const FinishZone: React.FC<FinishZoneProps> = ({ isMyTurn, gameMode = 'standard' }) => {
     const { setNodeRef, isOver } = useDroppable({ id: 'finish-zone' });
-    const is101Mode = gameMode === '101';
+    const is101Mode = false;
 
     if (!isMyTurn) return null;
 
@@ -18,7 +18,7 @@ export const FinishZone: React.FC<FinishZoneProps> = ({ isMyTurn, gameMode = 'st
             className={`
                 absolute top-1/2 -translate-y-1/2 right-[-260px] w-24 h-32 rounded-3xl border-4 border-dashed transition-all duration-300 flex flex-col items-center justify-center gap-2
                 ${isOver
-                    ? (is101Mode ? 'bg-red-500/20 border-red-400 shadow-[0_0_30px_rgba(255,0,0,0.3)]' : 'bg-yellow-500/20 border-yellow-400 shadow-[0_0_30px_rgba(255,215,0,0.3)]')
+                    ? 'bg-yellow-500/20 border-yellow-400 shadow-[0_0_30px_rgba(255,215,0,0.3)]'
                     : 'bg-white/5 border-white/20 hover:bg-white/10'
                 }
                 scale-110
@@ -29,7 +29,7 @@ export const FinishZone: React.FC<FinishZoneProps> = ({ isMyTurn, gameMode = 'st
                 BİTİRMEK <br /> İÇİN BURAYA
             </div>
             {isOver && (
-                <div className={`absolute inset-0 rounded-3xl animate-ping border-4 ${is101Mode ? 'border-red-400/50' : 'border-yellow-400/50'}`}></div>
+                <div className={`absolute inset-0 rounded-3xl animate-ping border-4 border-yellow-400/50`}></div>
             )}
         </div>
     );

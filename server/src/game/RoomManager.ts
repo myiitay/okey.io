@@ -1,7 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import { OkeyGame } from './OkeyGame';
-import { Game101 } from './Game101';
-import { GameState, RoomSettings, Player as SharedPlayer, RoomData, CreateRoomSchema, JoinRoomSchema, GameState101 } from '@okey/shared';
+import { GameState, RoomSettings, Player as SharedPlayer, RoomData, CreateRoomSchema, JoinRoomSchema } from '@okey/shared';
 import { randomUUID } from 'crypto';
 
 interface Player extends SharedPlayer {
@@ -11,7 +10,7 @@ interface Player extends SharedPlayer {
 interface Room {
     id: string;
     players: Player[];
-    game?: OkeyGame | Game101;
+    game?: OkeyGame;
     maxPlayers: number;
     winScores: Map<string, number>; // Name -> Score
     restartVotes: Set<string>; // Socket ID
@@ -614,7 +613,7 @@ export class RoomManager {
         };
     }
 
-    private sanitizeGameState(state: GameState | GameState101, targetPlayerId: string): GameState | GameState101 {
+    private sanitizeGameState(state: GameState, targetPlayerId: string): GameState {
         // Optimization: Shallow copy root, reconstruct players array.
         // Avoid JSON.parse/stringify for better performance.
         const sanitizedParams: any = {
@@ -638,7 +637,7 @@ export class RoomManager {
         return sanitizedParams;
     }
 
-    private broadcastGameState(roomId: string, state: GameState | GameState101, eventName: string = 'gameState') {
+    private broadcastGameState(roomId: string, state: GameState, eventName: string = 'gameState') {
         const room = this.rooms.get(roomId);
         if (!room) return;
 
@@ -732,89 +731,46 @@ export class RoomManager {
                 playerOrder = [team1[0], team2[0], team1[1], team2[1]];
             }
 
-            if (room.gameMode === '101') {
-                room.game = new Game101(playerOrder.map(p => p.id), (gameState: GameState101) => {
-                    // Win detection reuse
-                    if (gameState.status === 'FINISHED' && gameState.winnerId) {
-                        const winner = room.players.find(p => p.id === gameState.winnerId);
-                        if (winner) {
-                            if (room.settings.isPaired && winner.team) {
-                                // Team win
-                                const teamName = `Team ${winner.team}`;
-                                const currentScore = room.winScores.get(teamName) || 0;
-                                room.winScores.set(teamName, currentScore + 1);
-                            } else {
-                                // Individual win
-                                const currentScore = room.winScores.get(winner.name) || 0;
-                                room.winScores.set(winner.name, currentScore + 1);
-                            }
-                            this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+            room.game = new OkeyGame(playerOrder.map(p => p.id), (gameState: GameState) => {
+                // Win detection reuse
+                if (gameState.status === 'FINISHED' && gameState.winnerId) {
+                    const winner = room.players.find(p => p.id === gameState.winnerId);
+                    if (winner) {
+                        if (room.settings.isPaired && winner.team) {
+                            // Team win
+                            const teamName = `Team ${winner.team}`;
+                            const currentScore = room.winScores.get(teamName) || 0;
+                            room.winScores.set(teamName, currentScore + 1);
+                        } else {
+                            // Individual win
+                            const currentScore = room.winScores.get(winner.name) || 0;
+                            room.winScores.set(winner.name, currentScore + 1);
                         }
-                    } else if (gameState.status === 'FINISHED' && !gameState.winnerId) {
-                        // Draw logic
-                        console.log(`[RoomManager] Game in room ${room.id} ended in a draw.`);
-                        const drawMsg = {
-                            sender: 'Sistem',
-                            text: 'Oyun berabere bitti! Bütün taşlar tükendi.',
-                            time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-                            isSystem: true
-                        };
-                        this.io.to(room.id).emit('chatMessage', drawMsg);
-                    }
-                    this.broadcastGameState(room.id, gameState);
-
-                    if (gameState.status === 'FINISHED') {
-                        room.players.forEach(p => {
-                            if (p.isBot) {
-                                room.restartVotes.add(p.id);
-                            }
-                        });
                         this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
-                        this.checkRestartCondition(room);
                     }
-                });
-            } else {
-                room.game = new OkeyGame(playerOrder.map(p => p.id), (gameState: GameState) => {
-                    // Win detection reuse
-                    if (gameState.status === 'FINISHED' && gameState.winnerId) {
-                        const winner = room.players.find(p => p.id === gameState.winnerId);
-                        if (winner) {
-                            if (room.settings.isPaired && winner.team) {
-                                // Team win
-                                const teamName = `Team ${winner.team}`;
-                                const currentScore = room.winScores.get(teamName) || 0;
-                                room.winScores.set(teamName, currentScore + 1);
-                            } else {
-                                // Individual win
-                                const currentScore = room.winScores.get(winner.name) || 0;
-                                room.winScores.set(winner.name, currentScore + 1);
-                            }
-                            this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+                } else if (gameState.status === 'FINISHED' && !gameState.winnerId) {
+                    // Draw logic
+                    console.log(`[RoomManager] Game in room ${room.id} ended in a draw.`);
+                    const drawMsg = {
+                        sender: 'Sistem',
+                        text: 'Oyun berabere bitti! Bütün taşlar tükendi.',
+                        time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                        isSystem: true
+                    };
+                    this.io.to(room.id).emit('chatMessage', drawMsg);
+                }
+                this.broadcastGameState(room.id, gameState);
+
+                if (gameState.status === 'FINISHED') {
+                    room.players.forEach(p => {
+                        if (p.isBot) {
+                            room.restartVotes.add(p.id);
                         }
-                    } else if (gameState.status === 'FINISHED' && !gameState.winnerId) {
-                        // Draw logic
-                        console.log(`[RoomManager] Game in room ${room.id} ended in a draw.`);
-                        const drawMsg = {
-                            sender: 'Sistem',
-                            text: 'Oyun berabere bitti! Bütün taşlar tükendi.',
-                            time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-                            isSystem: true
-                        };
-                        this.io.to(room.id).emit('chatMessage', drawMsg);
-                    }
-                    this.broadcastGameState(room.id, gameState);
-
-                    if (gameState.status === 'FINISHED') {
-                        room.players.forEach(p => {
-                            if (p.isBot) {
-                                room.restartVotes.add(p.id);
-                            }
-                        });
-                        this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
-                        this.checkRestartCondition(room);
-                    }
-                });
-            }
+                    });
+                    this.io.to(room.id).emit('updateRoom', this.getRoomData(room.id));
+                    this.checkRestartCondition(room);
+                }
+            });
 
             const initialState = room.game.start();
             room.restartVotes.clear();

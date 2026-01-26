@@ -342,23 +342,21 @@ function HomeContent() {
                 <div className="absolute top-6 left-6 z-[100]">
                     <button
                         onClick={() => {
-                            soundManager.play('click');
-                            setIsBurning(true);
-                            setTimeout(() => router.push('/101'), 600);
+                            soundManager.play('error');
                         }}
-                        className="relative group/101btn transform hover:scale-110 active:scale-95 transition-all duration-300"
+                        className="relative group/101btn transform hover:scale-105 transition-all duration-300 cursor-not-allowed grayscale opacity-80"
                     >
                         {/* Wrapper for background and content with overflow hidden */}
-                        <div className="relative overflow-hidden rounded-[2rem] p-1.5 shadow-[0_20px_50px_rgba(239,68,68,0.4)]">
-                            <div className="absolute inset-0 bg-gradient-to-r from-red-600 via-orange-500 to-red-600 animate-gradient-xy group-hover:scale-110 transition-transform"></div>
-                            <div className="relative bg-[#0f172a] rounded-[1.8rem] px-10 py-5 flex flex-col items-center justify-center border-2 border-red-500/50 group-hover:bg-transparent transition-colors">
-                                <span className="text-white font-black text-4xl tracking-tighter drop-shadow-lg leading-none">101</span>
-                                <span className="text-red-500 group-hover:text-white font-bold text-[10px] tracking-[0.3em] uppercase mt-1">MODU</span>
+                        <div className="relative overflow-hidden rounded-[2rem] p-1.5 shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
+                            <div className="absolute inset-0 bg-gradient-to-r from-gray-700 via-gray-600 to-gray-700"></div>
+                            <div className="relative bg-[#0f172a] rounded-[1.8rem] px-10 py-5 flex flex-col items-center justify-center border-2 border-gray-600/50">
+                                <span className="text-gray-400 font-black text-4xl tracking-tighter drop-shadow-lg leading-none">101</span>
+                                <span className="text-gray-500 font-bold text-[10px] tracking-[0.3em] uppercase mt-1">MODU</span>
                             </div>
                         </div>
-                        {/* YENİ Tag - Now outside the overflow-hidden wrapper */}
-                        <div className="absolute -top-3 -right-3 z-[110] bg-yellow-400 text-black text-[14px] font-black px-4 py-1.5 rounded-full shadow-2xl rotate-12 group-hover:rotate-0 transition-transform ring-4 ring-white/30 pointer-events-none">
-                            YENİ 🔥
+                        {/* YAKINDA Tag */}
+                        <div className="absolute -top-3 -right-3 z-[110] bg-gray-500 text-white text-[12px] font-black px-4 py-1.5 rounded-full shadow-2xl rotate-12 ring-4 ring-white/10 pointer-events-none">
+                            YAKINDA 🔒
                         </div>
                     </button>
                 </div>
@@ -564,8 +562,8 @@ function HomeContent() {
                                                         rooms.map((room) => (
                                                             <div key={room.id} className="bg-white border-2 border-indigo-100 rounded-2xl p-3 flex items-center justify-between hover:border-indigo-300 hover:shadow-md transition-all group">
                                                                 <div className="flex items-center gap-3">
-                                                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-bold text-white shadow-md transform group-hover:scale-110 transition-transform ${room.mode === '101' ? 'bg-red-500' : 'bg-indigo-500'}`}>
-                                                                        {room.mode === '101' ? '101' : '🎲'}
+                                                                    <div className="w-12 h-12 rounded-xl flex items-center justify-center text-lg font-bold text-white shadow-md transform group-hover:scale-110 transition-transform bg-indigo-500">
+                                                                        🎲
                                                                     </div>
                                                                     <div>
                                                                         <div className="font-black text-gray-700 font-mono text-xl leading-none">

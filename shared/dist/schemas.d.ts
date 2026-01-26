@@ -5,7 +5,6 @@ export declare const CreateRoomSchema: z.ZodObject<{
     frameId: z.ZodOptional<z.ZodString>;
     gameMode: z.ZodDefault<z.ZodOptional<z.ZodEnum<{
         standard: "standard";
-        101: "101";
     }>>>;
 }, z.core.$strip>;
 export declare const JoinRoomSchema: z.ZodObject<{

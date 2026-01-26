@@ -35,7 +35,6 @@ import { Leaderboard } from './game/Leaderboard';
 import { FinishZone } from './game/FinishZone';
 
 
-
 interface GameBoardProps {
     roomCode: string;
     currentUser: { id: string; name: string };
@@ -59,7 +58,47 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     const is101Mode = false;
     const socket = getSocket();
 
+    // INTRO SEQUENCE STATE
+    const [introPhase, setIntroPhase] = useState<'none' | 'deal' | 'joker'>('none');
+    const [showIntroOverlay, setShowIntroOverlay] = useState(false);
 
+    // Initial Trigger for Intro
+    useEffect(() => {
+        if (isFreshStart && initialGameState) {
+            // START IMMEDIATELY with Dealing (Stream)
+            setIntroPhase('deal');
+            setShowIntroOverlay(true);
+            soundManager.play('dealing');
+        }
+    }, [isFreshStart, initialGameState]);
+
+    // Phase 1: Dealing (Stream Animation Duration)
+    useEffect(() => {
+        if (introPhase === 'deal') {
+            const timer = setTimeout(() => {
+                setIntroPhase('joker');
+                soundManager.play('joker_reveal');
+            }, 3500); // 3.5s ensures all burst particles finish
+            return () => clearTimeout(timer);
+        }
+    }, [introPhase]);
+
+    // Phase 2: Joker Reveal (Duration)
+    useEffect(() => {
+        if (introPhase === 'joker') {
+            const timer = setTimeout(() => {
+                setIntroPhase('none');
+                setShowIntroOverlay(false);
+                soundManager.play('game_start');
+
+                // Start 30s timer for Auto-Arrange button visibility
+                setTimeout(() => {
+                    setIsAutoArrangeVisible(false);
+                }, 30000);
+            }, 3000); // 3 seconds to admire (slightly longer)
+            return () => clearTimeout(timer);
+        }
+    }, [introPhase]);
 
 
     const [gameState, setGameState] = useState<GameState | null>(initialGameState);
@@ -782,9 +821,104 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
 
 
+    // --- INTRO OVERLAY COMPONENT ---
+    const IntroOverlay = () => {
+        if (!showIntroOverlay || !gameState) return null;
 
+        return (
+            <div className="fixed inset-0 z-[999] bg-black/80 backdrop-blur-sm flex items-center justify-center overflow-hidden pointer-events-none">
 
+                {/* 1. COUNTDOWN (Removed) */}
 
+                {/* 2. DEALING ANIMATION (Radial Burst) */}
+                {introPhase === 'deal' && (
+                    <div className="absolute inset-0 pointer-events-none perspective-[1000px]">
+                        {/* Center Stack */}
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+                            {[...Array(5)].map((_, i) => (
+                                <div key={i} className="absolute w-12 h-16 bg-[#3e2716] border border-[#2a1a0e] rounded shadow-2xl"
+                                    style={{ transform: `translate(${-i}px, ${-i}px)` }}></div>
+                            ))}
+                        </div>
+
+                        {/* Bursting Tiles */}
+                        {[...Array(24)].map((_, i) => {
+                            const target = i % 4;
+                            const angle = target * 90; // 0, 90, 180, 270
+                            const delay = i * 0.08;
+
+                            // Random spread within the target direction
+                            const spread = (Math.random() - 0.5) * 30;
+                            // Move further out
+
+                            let tx = 0, ty = 0;
+                            if (target === 0) { tx = 0; ty = 450; } // Bottom
+                            else if (target === 1) { tx = 650; ty = 0; } // Right
+                            else if (target === 2) { tx = 0; ty = -450; } // Top
+                            else if (target === 3) { tx = -650; ty = 0; } // Left
+
+                            return (
+                                <motion.div
+                                    key={i}
+                                    initial={{ x: 0, y: 0, scale: 0, rotateX: 0 }}
+                                    animate={{
+                                        x: tx + (Math.random() * 50 - 25),
+                                        y: ty + (Math.random() * 50 - 25),
+                                        scale: 1,
+                                        opacity: [1, 1, 0],
+                                        rotateZ: Math.random() * 360,
+                                        rotateX: 360 // Flip while flying
+                                    }}
+                                    transition={{ duration: 0.8, delay: delay, ease: "backIn" }}
+                                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-14 bg-[#f3eacb] border border-[#8b5a2b] rounded-sm shadow-xl z-20"
+                                />
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* 3. JOKER REVEAL (Skyfall monolith) */}
+                {introPhase === 'joker' && (
+                    <div className="flex flex-col items-center justify-center gap-8 perspective-[1000px]">
+                        {/* Flash */}
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: [0, 1, 0] }}
+                            transition={{ duration: 0.2, delay: 0.5 }}
+                            className="fixed inset-0 bg-white z-[9999] pointer-events-none"
+                        />
+
+                        <motion.div
+                            initial={{ y: -1200, scale: 3, rotateY: 720 }}
+                            animate={{ y: 0, scale: 2, rotateY: 0 }}
+                            transition={{
+                                duration: 0.6,
+                                type: "spring",
+                                bounce: 0.3
+                            }}
+                            className="relative preserve-3d"
+                        >
+                            {/* The Monolith Tile */}
+                            <div className="relative w-16 h-22 shadow-[0_50px_100px_rgba(0,0,0,0.9)]">
+                                <Tile {...gameState.okeyTile} size="lg" className="glass-tile-effect border-4 border-yellow-500 shadow-[0_0_50px_rgba(234,179,8,0.8)]" />
+                            </div>
+                        </motion.div>
+
+                        <motion.div
+                            initial={{ opacity: 0, scale: 2 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: 0.6, type: "spring" }}
+                            className="text-white text-4xl font-black uppercase tracking-[0.5em] drop-shadow-[0_4px_0_rgba(0,0,0,1)]"
+                        >
+                            Gösterge
+                        </motion.div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const isIntroRunning = introPhase !== 'none';
 
 
     // --- RENDER GAME ---
@@ -859,10 +993,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
     return (
         <div className={`fixed inset-0 select-none overflow-hidden ${is101Mode ? 'bg-[#310000]' : themeConfig.base} perspective-1000 font-sans`}>
-            {/* Background Atmosphere */}
-            <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-[#4a0404] via-[#310000] to-[#1a0505]' : `bg-gradient-to-br ${themeConfig.gradient}`} pointer-events-none transition-all duration-1000 opacity-60`}></div>
-            <div className={`absolute top-0 right-0 w-[800px] h-[800px] ${is101Mode ? 'bg-red-600/10' : themeConfig.accent} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 opacity-100`}></div>
-            <div className={`absolute bottom-0 left-0 w-[800px] h-[800px] ${is101Mode ? 'bg-rose-600/10' : themeConfig.accent} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 opacity-100`} style={{ animationDelay: "2s" }}></div>
+            {/* Background Atmosphere - Dimmed during Intro */}
+            <div className={`absolute inset-0 ${is101Mode ? 'bg-gradient-to-br from-[#4a0404] via-[#310000] to-[#1a0505]' : `bg-gradient-to-br ${themeConfig.gradient}`} pointer-events-none transition-all duration-1000 ${isIntroRunning ? 'brightness-50' : 'opacity-60'}`}></div>
+            <div className={`absolute top-0 right-0 w-[800px] h-[800px] ${is101Mode ? 'bg-red-600/10' : themeConfig.accent} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 ${isIntroRunning ? 'opacity-0' : 'opacity-100'}`}></div>
+            <div className={`absolute bottom-0 left-0 w-[800px] h-[800px] ${is101Mode ? 'bg-rose-600/10' : themeConfig.accent} rounded-full blur-[120px] pointer-events-none animate-pulse transition-opacity duration-1000 ${isIntroRunning ? 'opacity-0' : 'opacity-100'}`} style={{ animationDelay: "2s" }}></div>
 
             {/* Particle Atmosphere */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -891,7 +1025,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 ))}
             </div>
 
-
+            {/* Intro Overlay - Takes over the screen */}
+            <AnimatePresence>
+                {isIntroRunning && <IntroOverlay />}
+            </AnimatePresence>
 
             {/* MAIN GAME CONTENT - Strictly Hidden/Blocked during Intro */}
             <DndContext
@@ -905,9 +1042,9 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 </DragOverlay>
 
                 <motion.div
-                    className={`w-full h-full relative`}
+                    className={`w-full h-full relative ${isIntroRunning ? 'pointer-events-none' : ''}`}
                     initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
+                    animate={{ opacity: isIntroRunning ? 0 : 1 }}
                     transition={{ duration: 1.5, ease: "easeOut" }} // Slow fade-in after intro
                 >
 
